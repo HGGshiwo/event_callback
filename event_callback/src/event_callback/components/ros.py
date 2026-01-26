@@ -1,17 +1,14 @@
 from functools import partial
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Type
 import rospy
 
-from event_callback.core import BaseComponent
-from event_callback.types import T_BaseManager
+from event_callback.core import R, BaseComponent, BaseComponentHelper, CallbackManager
 
 
 class ROSComponent(BaseComponent):
     """ROS Topic组件：仅负责ROS Topic回调的注册与处理，实现BaseComponent抽象方法"""
 
-    name = "ros"
-
-    def __init__(self, manager_instance: T_BaseManager, **config: Dict[str, Any]):
+    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
         super().__init__(manager_instance, **config)
         # 初始化ROS节点（确保全局仅初始化一次，避免重复初始化报错）
         self._init_ros_node()
@@ -29,9 +26,23 @@ class ROSComponent(BaseComponent):
         # 获取当前组件绑定的所有Topic回调参数
         for callback, args, kwargs in callbacks:
             # 注册Topic订阅，将Manager实例绑定到回调函数（偏函数传参）
+            topic_name, topic_type, queue_size = args
+            callback = partial(callback, self.manager_instance)
             rospy.Subscriber(
-                *args,
-                callback=partial(callback, self.manager_instance),
-                queue_size=1,
-                **kwargs,
+                topic_name,
+                topic_type,
+                callback,
+                queue_size=queue_size,
             )
+
+
+class ros(BaseComponentHelper):
+    target = ROSComponent
+
+    @classmethod
+    def topic(cls, topic_name: str, topic_type: Type, queue_size: Optional[int] = None):
+        R._create_comp_decorator(cls.target, topic_name, topic_type, queue_size)
+
+    @classmethod
+    def config(cls):
+        return cls.target, {}

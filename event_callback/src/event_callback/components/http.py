@@ -1,8 +1,6 @@
-from functools import partial, update_wrapper
 from types import MethodType
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Union
 
-import rospy
 import uvicorn
 import asyncio
 import json
@@ -10,14 +8,19 @@ import threading
 import logging
 from pathlib import Path
 from uvicorn.config import Config
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+try:
+    import rospy
+except:
+    pass
+
 # ROS相关消息/服务导入（仅保留框架必要的，删除业务相关）
-from std_msgs.msg import Empty, String
+from std_msgs.msg import Empty
 from event_callback_msg.srv import (
     ProcessRequest,
     Register,
@@ -26,8 +29,7 @@ from event_callback_msg.srv import (
 )
 
 # 组件基类导入（与之前的ROS组件保持一致）
-from event_callback.core import BaseComponent, CallbackItem
-from event_callback.types import T_BaseManager
+from event_callback.core import R, BaseComponentHelper, BaseComponent, CallbackItem, CallbackManager
 from typing import List
 
 
@@ -38,8 +40,6 @@ class HTTPComponent(BaseComponent):
     - path: url for callback
     - method: "POST", "GET" etc.
     """
-
-    name = "app"
 
     class FilterLogMiddleware(BaseHTTPMiddleware):
         """FastAPI日志过滤中间件：屏蔽指定路径的访问日志，减少冗余输出"""
@@ -130,7 +130,7 @@ class HTTPComponent(BaseComponent):
             except Exception:
                 self.remove_connection(ws)
 
-    def __init__(self, manager_instance: T_BaseManager, **config: Dict[str, Any]):
+    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
         """
         初始化FastAPI-ROS组件
         :param manager_instance: BaseManager子类实例（组件基类要求）
@@ -169,7 +169,7 @@ class HTTPComponent(BaseComponent):
         if self.enable_register:
             self._init_ros_register_service()
         self.start_fastapi_server()
-        rospy.loginfo(f"FastapiRosComponent组件完成回调注册，register功能: {self.enable_register}")
+        print(f"FastapiRosComponent组件完成回调注册，register功能: {self.enable_register}")
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点（全局仅一次，节点名优先取配置，否则用Manager类名）"""
@@ -178,7 +178,7 @@ class HTTPComponent(BaseComponent):
         )
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
-            rospy.loginfo(f"Http组件初始化ROS节点: {node_name}")
+            print(f"Http组件初始化ROS节点: {node_name}")
 
     def _init_fastapi_middleware(self) -> None:
         """初始化FastAPI中间件：CORS跨域、日志过滤"""
@@ -200,7 +200,7 @@ class HTTPComponent(BaseComponent):
                 "/static", StaticFiles(directory=self.static_dir), name="static"
             )
         else:
-            rospy.logwarn(f"FastAPI静态文件目录不存在: {self.static_dir}，跳过挂载")
+            print(f"FastAPI静态文件目录不存在: {self.static_dir}，跳过挂载")
 
     def _init_fastapi_routes(self) -> None:
         """初始化FastAPI基础路由：首页、视频流、WebRTC、注册接口、WebSocket"""
@@ -248,12 +248,12 @@ class HTTPComponent(BaseComponent):
         """初始化ROS register服务和do_register发布器（enable_register=True时调用）"""
         # 注册ROS /register服务，用于ROS端动态映射FastAPI路由
         rospy.Service("register", Register, self._ros_register_callback)
-        rospy.loginfo("FastAPI-ROS组件注册ROS服务: /register")
+        print("FastAPI-ROS组件注册ROS服务: /register")
         # 创建do_register发布器，用于触发路由注册（std_msgs/Empty）
         self.do_register_pub = rospy.Publisher(
             "do_register", Empty, queue_size=10, latch=True
         )
-        rospy.loginfo("FastAPI-ROS组件创建ROS发布器: do_register")
+        print("FastAPI-ROS组件创建ROS发布器: do_register")
 
     def _ros_register_callback(self, req: RegisterRequest) -> RegisterResponse:
         """ROS register服务回调：动态添加FastAPI路由，与HTTP接口逻辑一致"""
@@ -263,13 +263,13 @@ class HTTPComponent(BaseComponent):
             self.app.add_api_route(path, handler.__call__, methods=[method])
             self.app.openapi_schema = None
             self.app.setup()
-            rospy.loginfo(f"ROS端动态注册FastAPI路由: {method} {path} -> {topic}")
+            print(f"ROS端动态注册FastAPI路由: {method} {path} -> {topic}")
             return RegisterResponse(
                 response=json.dumps({"status": "success", "msg": "OK"})
             )
 
         except Exception as e:
-            rospy.logerr(f"ROS注册路由失败: {e}")
+            print(f"ROS注册路由失败: {e}")
             return RegisterResponse(
                 response=json.dumps({"status": "error", "msg": str(e)})
             )
@@ -279,13 +279,13 @@ class HTTPComponent(BaseComponent):
         config = Config(self.app, host=self.fastapi_host, port=self.fastapi_port)
         server = uvicorn.Server(config)
         self.loop = asyncio.get_event_loop()  # 保存事件循环，供WS广播使用
-        rospy.loginfo(f"FastAPI服务启动: {self.fastapi_host}:{self.fastapi_port}")
+        print(f"FastAPI服务启动: {self.fastapi_host}:{self.fastapi_port}")
         await server.serve()
 
     def start_fastapi_server(self) -> None:
         """启动FastAPI服务（独立线程），与ROS同步逻辑解耦，避免阻塞"""
         if self.server_thread and self.server_thread.is_alive():
-            rospy.logwarn("FastAPI服务已在运行，无需重复启动")
+            print("FastAPI服务已在运行，无需重复启动")
             return
         # 创建异步线程运行FastAPI
         self.server_thread = threading.Thread(
@@ -294,15 +294,15 @@ class HTTPComponent(BaseComponent):
             daemon=True,  # 守护线程，ROS退出时自动终止
         )
         self.server_thread.start()
-        rospy.loginfo("FastAPI服务线程已启动")
+        print("FastAPI服务线程已启动")
 
     def do_register_trigger(self) -> None:
         """触发do_register发布：向ROS do_register话题发布Empty消息，供外部调用"""
         if not self.enable_register or not self.do_register_pub:
-            rospy.logwarn("未启用register功能，无法触发do_register")
+            print("未启用register功能，无法触发do_register")
             return
         self.do_register_pub.publish(Empty())
-        rospy.loginfo("FastAPI-ROS组件触发do_register发布")
+        print("FastAPI-ROS组件触发do_register发布")
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
         """实现BaseComponent抽象方法：组件核心回调/服务注册入口
@@ -314,3 +314,31 @@ class HTTPComponent(BaseComponent):
             methods = kwargs.get("methods", [])
             methods = methods + list(args[1:])
             self.app.add_api_route(args[0], endpoint=endpoint, methods=methods)
+
+
+class http(BaseComponentHelper):
+    target = HTTPComponent
+
+    @classmethod
+    def post(cls, url: str):
+        return R._create_comp_decorator(cls.target, url, "POST")
+
+    @classmethod
+    def get(cls, url: str):
+        return R._create_comp_decorator(cls.target, url, "GET")
+
+    @classmethod
+    def config(
+        cls,
+        host: Optional[str] = "0.0.0.0",
+        port: Optional[int] = 8000,
+        register: Optional[bool] = False,
+        static_dir: Optional[Union[str, Path]] = None,
+    ):
+        kwargs = {
+            "host": host,
+            "port": port,
+            "register": register,
+            "static_idr": static_dir,
+        }
+        return cls.target, kwargs

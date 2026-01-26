@@ -3,15 +3,24 @@ import socket
 import asyncio
 import threading
 from functools import partial
-from typing import Any, Awaitable, Dict, List, Callable, Optional, Tuple, Union
+from typing import Any, Awaitable, Dict, List, Callable, Optional, Tuple, Type, Union
 
-import rospy
+try:
+    import rospy
+except:
+    rospy = None
+    
 from std_msgs.msg import Empty
 from mavproxy_ros.srv import RegisterRequest
-
+from event_callback.utils import rospy_is_shutdown()
 # 组件基类与类型导入
-from event_callback.core import BaseComponent, CallbackItem
-from event_callback.types import T_BaseManager
+from event_callback.core import (
+    R,
+    BaseComponent,
+    BaseComponentHelper,
+    CallbackItem,
+    CallbackManager,
+)
 
 # 公共类型别名
 ConnType = Union[socket.socket, None]
@@ -41,7 +50,7 @@ class BaseSocketManager:
                 # TCP：3.6+原生支持sock_sendall，无需兼容
                 await loop.sock_sendall(conn, data)
         except Exception as e:
-            rospy.logwarn(f"Socket发送数据异常: {str(e)}")
+            print(f"Socket发送数据异常: {str(e)}")
 
     async def decode_data(self, data: bytes, decode: bool = False):
         """通用数据解码：统一异常处理，返回解码后的字符串/原字节"""
@@ -51,13 +60,19 @@ class BaseSocketManager:
             data_str = data.decode("utf8").strip()
             return data_str if data_str else None
         except Exception as e:
-            rospy.logwarn(f"Socket数据解码失败: {str(e)}")
+            print(f"Socket数据解码失败: {str(e)}")
             return None
 
     async def route_callback(self, data_str: str, addr: AddrType = None):
         """通用回调路由核心：提取ID→映射URL→执行回调（服务端/客户端/TCP/UDP完全复用）"""
-        if not all([self.component.id_extractor, self.component.id_url_map, self.component.callback_map]):
-            rospy.logwarn("Socket回调路由失败：未初始化ID提取函数/映射表/回调函数")
+        if not all(
+            [
+                self.component.id_extractor,
+                self.component.id_url_map,
+                self.component.callback_map,
+            ]
+        ):
+            print("Socket回调路由失败：未初始化ID提取函数/映射表/回调函数")
             return
 
         # 提取业务ID并映射回调URL
@@ -65,10 +80,10 @@ class BaseSocketManager:
             data_id = self.component.id_extractor(data_str)
             callback_url = self.component.id_url_map.get(data_id)
             if not callback_url or callback_url not in self.component.callback_map:
-                rospy.logwarn(f"无匹配的回调函数，ID: {data_id}")
+                print(f"无匹配的回调函数，ID: {data_id}")
                 return
         except Exception as e:
-            rospy.logerr(f"Socket提取ID失败: {str(e)}")
+            print(f"Socket提取ID失败: {str(e)}")
             return
 
         # 执行回调（兼容同步/异步，入参统一）
@@ -79,7 +94,7 @@ class BaseSocketManager:
             else:
                 callback(self.component.manager_instance, data_str, data_id, addr)
         except Exception as e:
-            rospy.logerr(f"Socket执行回调失败: {str(e)}")
+            print(f"Socket执行回调失败: {str(e)}")
 
 
 class SocketServerManager(BaseSocketManager):
@@ -95,7 +110,7 @@ class SocketServerManager(BaseSocketManager):
             return
         with self.lock:
             self.connections.append((conn, addr))
-        rospy.loginfo(f"TCP服务端：新客户端连接 {addr}，当前连接数: {len(self.connections)}")
+        print(f"TCP服务端：新客户端连接 {addr}，当前连接数: {len(self.connections)}")
 
     def remove_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：移除客户端连接（线程安全，自动关闭socket，仅TCP生效）"""
@@ -108,7 +123,7 @@ class SocketServerManager(BaseSocketManager):
             conn.close()
         except Exception:
             pass
-        rospy.loginfo(f"TCP服务端：客户端断开 {addr}，当前连接数: {len(self.connections)}")
+        print(f"TCP服务端：客户端断开 {addr}，当前连接数: {len(self.connections)}")
 
 
 class SocketClientManager(BaseSocketManager):
@@ -124,26 +139,26 @@ class SocketClientManager(BaseSocketManager):
     async def connect(self, host: str, port: int, socket_type: Any) -> bool:
         """客户端：主动连接服务端（TCP真连接/UDP伪连接），返回连接结果"""
         if self.is_connected:
-            rospy.logwarn(f"{socket_type.name}客户端：已连接服务端，无需重复连接")
+            print(f"{socket_type.name}客户端：已连接服务端，无需重复连接")
             return True
         try:
             self.conn = socket.socket(socket.AF_INET, socket_type)
             self.conn.setblocking(False)
             self.addr = (host, port)
             loop = asyncio.get_event_loop()
-            
+
             if socket_type == socket.SOCK_STREAM:
                 # TCP：三次握手建立真连接
                 await loop.sock_connect(self.conn, self.addr)
             else:
                 # UDP：伪连接（仅固定目标地址，无实际连接过程）
                 self.conn.connect(self.addr)
-            
+
             self.is_connected = True
-            rospy.loginfo(f"{socket_type.name}客户端：成功连接服务端 {host}:{port}")
+            print(f"{socket_type.name}客户端：成功连接服务端 {host}:{port}")
             return True
         except Exception as e:
-            rospy.logerr(f"{socket_type.name}客户端：连接服务端失败 {host}:{port}，原因: {str(e)}")
+            print(f"{socket_type.name}客户端：连接服务端失败 {host}:{port}，原因: {str(e)}")
             self.conn = None
             self.addr = None
             self.is_connected = False
@@ -159,7 +174,7 @@ class SocketClientManager(BaseSocketManager):
                     pass
                 self.is_connected = False
                 self.conn = None
-                rospy.loginfo(f"Socket客户端：主动断开与服务端 {self.addr} 的连接")
+                print(f"Socket客户端：主动断开与服务端 {self.addr} 的连接")
 
     async def auto_reconnect(self):
         """客户端：断连自动重连（后台异步运行，TCP/UDP通用）"""
@@ -167,14 +182,21 @@ class SocketClientManager(BaseSocketManager):
             return
         reconnect_count = 0
         self.reconnect_task = asyncio.current_task()
-        while not rospy.is_shutdown() and not self.is_connected:
+        while rospy_is_shutdown() and not self.is_connected:
             # 达到最大重连次数则停止（-1表示无限重连）
-            if self.component.max_reconnect != -1 and reconnect_count >= self.component.max_reconnect:
-                rospy.logerr(f"Socket客户端：达到最大重连次数 {self.component.max_reconnect}，停止重连")
+            if (
+                self.component.max_reconnect != -1
+                and reconnect_count >= self.component.max_reconnect
+            ):
+                print(f"Socket客户端：达到最大重连次数 {self.component.max_reconnect}，停止重连")
                 break
             # 尝试重连（传socket_type修复原代码缺参bug）
-            rospy.loginfo(f"Socket客户端：第 {reconnect_count+1} 次重连服务端...")
-            if await self.connect(self.component.socket_host, self.component.socket_port, self.component.socket_type):
+            print(f"Socket客户端：第 {reconnect_count+1} 次重连服务端...")
+            if await self.connect(
+                self.component.socket_host,
+                self.component.socket_port,
+                self.component.socket_type,
+            ):
                 break
             reconnect_count += 1
             await asyncio.sleep(self.component.reconnect_interval)
@@ -185,10 +207,8 @@ class BaseSocketComponent(BaseComponent):
     服务端/客户端/TCP/UDP均继承此类，实现最大程度复用
     """
 
-    name = "base"
-
     def __init__(
-        self, manager_instance: T_BaseManager, is_server: bool, **config: Dict[str, Any]
+        self, manager_instance: CallbackManager, is_server: bool, **config: Dict[str, Any]
     ):
         super().__init__(manager_instance, **config)
         self.is_server = is_server  # 标识服务端/客户端
@@ -207,7 +227,7 @@ class BaseSocketComponent(BaseComponent):
         # 匹配errno 11（Resource temporarily unavailable）
         return e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK
         # 注：EAGAIN和EWOULDBLOCK在Linux下是同一个值（11），兼容所有系统
-    
+
     def _get_socket_type(self):
         """通过配置type获取套接字类型，统一小写判断"""
         _type = self.config.get("type", "tcp").lower()
@@ -216,16 +236,21 @@ class BaseSocketComponent(BaseComponent):
         elif _type == "tcp":
             return socket.SOCK_STREAM
         raise KeyError(f"不支持的Socket类型: {_type}，仅支持tcp/udp")
-    
+
     def _parse_common_config(self):
         """解析服务端/客户端/TCP/UDP通用配置"""
         # 基础网络配置
-        self.socket_host = self.config.get("host", "0.0.0.0" if self.is_server else "127.0.0.1")
+        self.socket_host = self.config.get(
+            "host", "0.0.0.0" if self.is_server else "127.0.0.1"
+        )
         self.socket_port = self.config.get("port", 12345)
         self.socket_type = self._get_socket_type()  # TCP/UDP类型标识
         self.id_extractor: Optional[Callable] = self.config.get("parse_id")  # ID提取函数
-        self.id_url_map: Optional[Dict[str, str]] = self.config.get("id_url_map")  # ID->回调URL映射
+        self.id_url_map: Optional[Dict[str, str]] = self.config.get(
+            "id_url_map"
+        )  # ID->回调URL映射
         self.buffer_size = self.config.get("buffer_size", 256)  # 接收缓冲区大小
+        self.decode = self.config.get("decode", False) # 是否解码为字符串
         # ROS注册配置
         self.enable_register = self.config.get("register", True)
         self.ros_topic_prefix = self.config.get("ros_topic_prefix", "socket")
@@ -250,42 +275,52 @@ class BaseSocketComponent(BaseComponent):
         )
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
-            rospy.loginfo(f"Socket{node_suffix.capitalize()}初始化ROS节点: {node_name}")
+            print(f"Socket{node_suffix.capitalize()}初始化ROS节点: {node_name}")
 
     def _init_ros_pub_sub(self):
         """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
         register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/register"
         do_register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/do_register"
 
-        self.do_register_pub = rospy.Publisher(do_register_topic, Empty, queue_size=10, latch=True)
-        self.register_sub = rospy.Subscriber(register_topic, RegisterRequest, self._ros_register_callback, queue_size=10)
-        rospy.loginfo(
+        self.do_register_pub = rospy.Publisher(
+            do_register_topic, Empty, queue_size=10, latch=True
+        )
+        self.register_sub = rospy.Subscriber(
+            register_topic, RegisterRequest, self._ros_register_callback, queue_size=10
+        )
+        print(
             f"Socket{'Server' if self.is_server else 'Client'} ROS Pub/Sub初始化完成: "
             f"Pub={do_register_topic} | Sub={register_topic}"
         )
 
     def _init_socket_manager(self):
         """初始化专属Socket管理器（服务端/客户端分别实例化）"""
-        self.socket_mgr = SocketServerManager(self) if self.is_server else SocketClientManager(self)
+        self.socket_mgr = (
+            SocketServerManager(self) if self.is_server else SocketClientManager(self)
+        )
 
     def _ros_register_callback(self, req: RegisterRequest):
         """通用ROS注册回调（服务端/客户端通用，处理ROS端动态注册请求）"""
         try:
             callback_url = req.path
             if not callback_url:
-                rospy.logerr("Socket ROS注册失败：path参数为空")
+                print("Socket ROS注册失败：path参数为空")
                 return
-            rospy.loginfo(f"Socket{'Server' if self.is_server else 'Client'} ROS端动态注册回调: {callback_url}")
+            print(
+                f"Socket{'Server' if self.is_server else 'Client'} ROS端动态注册回调: {callback_url}"
+            )
         except Exception as e:
-            rospy.logerr(f"Socket ROS注册回调失败: {str(e)}")
+            print(f"Socket ROS注册回调失败: {str(e)}")
 
     def do_register_trigger(self):
         """通用注册触发方法：向ROS发布Empty消息，触发其他节点注册"""
         if not self.enable_register:
-            rospy.logwarn("Socket组件未启用ROS注册，无法触发do_register")
+            print("Socket组件未启用ROS注册，无法触发do_register")
             return
         self.do_register_pub.publish(Empty())
-        rospy.loginfo(f"Socket{'Server' if self.is_server else 'Client'} 触发ROS do_register消息发布")
+        print(
+            f"Socket{'Server' if self.is_server else 'Client'} 触发ROS do_register消息发布"
+        )
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
         """实现BaseComponent抽象方法：通用回调注册入口（全场景复用）
@@ -295,16 +330,12 @@ class BaseSocketComponent(BaseComponent):
                           - id_url_map: 字典 {数据ID: 回调url}，实现ID到回调的路由
         """
         for callback, args, kwargs in callbacks:
-            callback_url, id_extractor, id_url_map = args
+            callback_url = args[0]
             # 初始化全局唯一的ID提取函数和映射表（仅首次注册生效）
-            if not self.id_extractor:
-                self.id_extractor = id_extractor
-            if not self.id_url_map:
-                self.id_url_map = id_url_map
             # 线程安全注册回调
             with self.callback_lock:
                 self.callback_map[callback_url] = partial(callback, **kwargs)
-            rospy.loginfo(
+            print(
                 f"Socket{'Server' if self.is_server else 'Client'} 注册回调成功: "
                 f"{callback_url} -> {callback.__name__}"
             )
@@ -312,12 +343,16 @@ class BaseSocketComponent(BaseComponent):
     def _start_async_thread(self, coro):
         """通用异步线程启动方法：与ROS主线程解耦，全场景复用"""
         if self.socket_thread and self.socket_thread.is_alive():
-            rospy.logwarn(f"Socket{'Server' if self.is_server else 'Client'} 已在运行，无需重复启动")
+            print(
+                f"Socket{'Server' if self.is_server else 'Client'} 已在运行，无需重复启动"
+            )
             return
         # 守护线程：ROS退出时自动终止
-        self.socket_thread = threading.Thread(target=asyncio.run, args=(coro,), daemon=True)
+        self.socket_thread = threading.Thread(
+            target=asyncio.run, args=(coro,), daemon=True
+        )
         self.socket_thread.start()
-        rospy.loginfo(f"Socket{'Server' if self.is_server else 'Client'} 异步线程已启动")
+        print(f"Socket{'Server' if self.is_server else 'Client'} 异步线程已启动")
 
 
 class SocketServerComponent(BaseSocketComponent):
@@ -330,9 +365,7 @@ class SocketServerComponent(BaseSocketComponent):
     :param int buffer_size: 接收缓冲区大小
     """
 
-    name = "sockets"
-
-    def __init__(self, manager_instance: T_BaseManager, **config: Dict[str, Any]):
+    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
         super().__init__(manager_instance, is_server=True, **config)
         self.server_sock: ConnType = None
         self.start_socket_server()  # 启动服务端
@@ -343,14 +376,14 @@ class SocketServerComponent(BaseSocketComponent):
         # 发送连接成功提示
         await self.socket_mgr.safe_send(conn, b"connected to tcp socket server")
         try:
-            while not rospy.is_shutdown():
+            while not rospy_is_shutdown():
                 try:
                     # TCP基于连接接收数据，空数据表示客户端断开
                     data = await self.loop.sock_recv(conn, self.buffer_size)
                     if not data:
                         break
                     # 解码并路由回调
-                    if data_str := await self.socket_mgr.decode_data(data, decode=True):
+                    if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
                         await self.socket_mgr.route_callback(data_str, addr)
                 except Exception as e:
                     if self._is_nonblocking_normal_error(e):
@@ -358,49 +391,51 @@ class SocketServerComponent(BaseSocketComponent):
                         continue
                     raise e
         except Exception as e:
-            if not rospy.is_shutdown():
-                rospy.logwarn(f"TCP服务端处理客户端 {addr} 异常: {str(e)}")
+            if not rospy_is_shutdown():
+                print(f"TCP服务端处理客户端 {addr} 异常: {str(e)}")
         finally:
             self.socket_mgr.remove_conn(conn, addr)
 
     async def _run_udp_server(self):
         """UDP服务端专属：异步主逻辑，无连接，循环接收数据报（兼容Python3.6+）"""
-        while not rospy.is_shutdown():
+        while not rospy_is_shutdown():
             try:
                 # 低版本兼容：用run_in_executor执行recvfrom，替代3.9+的sock_recvfrom
-                data, addr = await self.loop.run_in_executor(None, self.server_sock.recvfrom, self.buffer_size)
+                data, addr = await self.loop.run_in_executor(
+                    None, self.server_sock.recvfrom, self.buffer_size
+                )
                 if not data:
                     continue
                 # 解码并路由回调（携带发送方地址）
-                if data_str := await self.socket_mgr.decode_data(data, decode=True):
+                if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
                     await self.socket_mgr.route_callback(data_str, addr)
             except Exception as e:
-                if rospy.is_shutdown():
+                if rospy_is_shutdown():
                     break
                 if self._is_nonblocking_normal_error(e):
                     await asyncio.sleep(0.05)
                     continue
-                rospy.logwarn(f"UDP服务端接收数据异常: {str(e)}")
+                print(f"UDP服务端接收数据异常: {str(e)}")
                 await asyncio.sleep(0.1)
 
     async def _run_tcp_server(self):
         """TCP服务端专属：异步主逻辑，监听+接受连接+多客户端处理"""
         self.server_sock.listen(8)  # 开启TCP监听
-        rospy.loginfo(f"TCP服务端已启动监听: {self.socket_host}:{self.socket_port}")
-        while not rospy.is_shutdown():
+        print(f"TCP服务端已启动监听: {self.socket_host}:{self.socket_port}")
+        while not rospy_is_shutdown():
             try:
                 # 接受TCP客户端连接，返回新的通信套接字
                 conn, addr = await self.loop.sock_accept(self.server_sock)
                 # 为每个客户端创建独立异步任务，实现并发处理
                 self.loop.create_task(self._handle_tcp_client(conn, addr))
             except Exception as e:
-                if rospy.is_shutdown():
+                if rospy_is_shutdown():
                     break
                 if self._is_nonblocking_normal_error(e):
                     await asyncio.sleep(0.05)  # 短暂延时，减少CPU空转
                     continue
                 # 其他错误才打印日志
-                rospy.logwarn(f"TCP服务端接受连接异常: {str(e)}")
+                print(f"TCP服务端接受连接异常: {str(e)}")
                 await asyncio.sleep(0.1)
         # 服务端关闭，清理所有TCP客户端连接
         for conn, addr in self.socket_mgr.connections:
@@ -419,7 +454,7 @@ class SocketServerComponent(BaseSocketComponent):
         if self.socket_type == socket.SOCK_STREAM:
             await self._run_tcp_server()
         else:
-            rospy.loginfo(f"UDP服务端已启动监听: {self.socket_host}:{self.socket_port}")
+            print(f"UDP服务端已启动监听: {self.socket_host}:{self.socket_port}")
             await self._run_udp_server()
 
         # 服务端关闭，释放套接字
@@ -432,7 +467,8 @@ class SocketServerComponent(BaseSocketComponent):
 
 class SocketClientComponent(BaseSocketComponent):
     """Socket客户端组件：支持TCP/UDP，仅实现客户端特有网络逻辑
-    配置通过type指定协议：type: tcp/udp
+
+    :param tcp/udp type: 配置通过type指定协议
     :param str host: 服务端IP
     :param int port: 服务端端口
     :param Callable parse_id: 数据包ID提取函数
@@ -442,43 +478,45 @@ class SocketClientComponent(BaseSocketComponent):
     :param int max_reconnect: 最大重连次数（-1=无限）
     """
 
-    name = "socketc"
-
-    def __init__(self, manager_instance: T_BaseManager, **config: Dict[str, Any]):
+    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
         super().__init__(manager_instance, is_server=False, **config)
         self.start_socket_client()  # 启动客户端
 
     async def _recv_data_loop(self):
         """客户端通用接收循环：按socket_type分支处理TCP/UDP（兼容Python3.6+）"""
-        while not rospy.is_shutdown() and self.socket_mgr.is_connected:
+        while not rospy_is_shutdown() and self.socket_mgr.is_connected:
             try:
                 if not self.socket_mgr.conn:
                     break
                 # 分支接收TCP/UDP数据，UDP做低版本兼容
                 try:
                     if self.socket_type == socket.SOCK_STREAM:
-                        data = await self.loop.sock_recv(self.socket_mgr.conn, self.buffer_size)
+                        data = await self.loop.sock_recv(
+                            self.socket_mgr.conn, self.buffer_size
+                        )
                         addr = self.socket_mgr.addr
                     else:
                         # 低版本兼容：UDP用run_in_executor执行recvfrom，替代3.9+的sock_recvfrom
-                        data, addr = await self.loop.run_in_executor(None, self.socket_mgr.conn.recvfrom, self.buffer_size)
+                        data, addr = await self.loop.run_in_executor(
+                            None, self.socket_mgr.conn.recvfrom, self.buffer_size
+                        )
                 except Exception as e:
                     if self._is_nonblocking_normal_error(e):
                         await asyncio.sleep(0.05)
                         continue
                     raise e  # 其他错误抛出
-                
+
                 if not data:  # 空数据表示TCP服务端断开，UDP无此情况
-                    rospy.logwarn("TCP客户端：服务端主动断开连接")
+                    print("TCP客户端：服务端主动断开连接")
                     self.socket_mgr.disconnect()
                     self.loop.create_task(self.socket_mgr.auto_reconnect())
                     break
                 # 解码并路由回调
-                if data_str := await self.socket_mgr.decode_data(data, decode=True):
+                if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
                     await self.socket_mgr.route_callback(data_str, addr)
             except Exception as e:
-                if not rospy.is_shutdown() and self.socket_mgr.is_connected:
-                    rospy.logwarn(f"Socket客户端接收数据异常: {str(e)}")
+                if not rospy_is_shutdown() and self.socket_mgr.is_connected:
+                    print(f"Socket客户端接收数据异常: {str(e)}")
                     self.socket_mgr.disconnect()
                     self.loop.create_task(self.socket_mgr.auto_reconnect())
                 break
@@ -487,10 +525,12 @@ class SocketClientComponent(BaseSocketComponent):
         """客户端统一入口：TCP/UDP通用连接+接收+重连逻辑"""
         self.loop = asyncio.get_event_loop()
         # 首次连接服务端
-        if not await self.socket_mgr.connect(self.socket_host, self.socket_port, self.socket_type):
+        if not await self.socket_mgr.connect(
+            self.socket_host, self.socket_port, self.socket_type
+        ):
             await self.socket_mgr.auto_reconnect()
         # 持续接收数据，断开则自动重连
-        while not rospy.is_shutdown():
+        while not rospy_is_shutdown():
             if self.socket_mgr.is_connected and self.socket_mgr.conn:
                 await self._recv_data_loop()
             else:
@@ -507,15 +547,99 @@ class SocketClientComponent(BaseSocketComponent):
         :param data: 待发送数据（字符串/字节流）
         """
         if not self.socket_mgr.is_connected or not self.socket_mgr.conn:
-            rospy.logwarn("Socket客户端：未连接服务端，发送数据失败")
+            print("Socket客户端：未连接服务端，发送数据失败")
             return
         # 统一转换为字节流
         data_bytes = data.encode("utf8") if isinstance(data, str) else data
         # 异步发送（TCP传None，UDP传服务端地址）
         asyncio.run_coroutine_threadsafe(
-            self.socket_mgr.safe_send(self.socket_mgr.conn, data_bytes, self.socket_mgr.addr),
-            self.loop
+            self.socket_mgr.safe_send(
+                self.socket_mgr.conn, data_bytes, self.socket_mgr.addr
+            ),
+            self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        log_data = data_bytes.decode("utf8", errors="ignore").strip()
-        rospy.loginfo(f"Socket客户端发送数据到服务端: {log_data}")
+        print(f"Socket客户端发送数据到服务端: {data_bytes}")
+
+
+class sockets(BaseComponentHelper):
+    target = SocketServerComponent
+    @classmethod
+    def recv(cls, url: str):
+        return R._create_comp_decorator(SocketServerComponent, url)
+        
+    
+    @classmethod
+    def config(
+        cls,
+        host: str,
+        port: int,
+        socket_type: str,
+        parse_id: Optional[Callable] = None,
+        id_url_map: Optional[Dict[str, Any]] = None,
+        decode: Optional[bool] = False,
+        buffer_size: Optional[int] = 256,
+        register: Optional[bool] = False,
+    ):
+        """配置SocketServerComponent
+
+        :param tcp/udp socket_type: 配置通过type指定协议
+        :param str host: 监听IP
+        :param int port: 监听端口
+        :param Callable parse_id: 数据包ID提取函数
+        :param Dict id_url_map: ID到回调URL的映射
+        :param bool decode: 是否需要解码为字符串
+        :param int buffer_size: 接收缓冲区大小
+        """
+        kwargs = {
+            "type": socket_type,
+            "host": host,
+            "port": port,
+            "parse_id": parse_id,
+            "id_url_map": id_url_map,
+            "decode": decode,
+            "buffer_size": buffer_size,
+            "register": register
+        }
+        return cls.target, kwargs
+
+
+class socketc(BaseComponentHelper):
+    target: Type["SocketClientComponent"] = SocketClientComponent
+
+    def config(
+        cls,
+        host: str,
+        port: int,
+        socket_type: str,
+        parse_id: Optional[Callable] = None,
+        id_url_map: Optional[Dict[str, Any]] = None,
+        decode: Optional[bool] = False,
+        buffer_size: Optional[int] = 256,
+        register: Optional[bool] = False,
+    ):
+        """配置SocketServerComponent
+
+        :param tcp/udp socket_type: 配置通过type指定协议
+        :param str host: 监听IP
+        :param int port: 监听端口
+        :param Callable parse_id: 数据包ID提取函数
+        :param Dict id_url_map: ID到回调URL的映射
+        :param bool decode: 是否需要解码为字符串
+        :param int buffer_size: 接收缓冲区大小
+        """
+        kwargs = {
+            "type": socket_type,
+            "host": host,
+            "port": port,
+            "parse_id": parse_id,
+            "id_url_map": id_url_map,
+            "decode": decode,
+            "buffer_size": buffer_size,
+            "register": register
+        }
+        return cls.target, kwargs
+
+    @classmethod
+    def send_to_server(cls, manager: CallbackManager, data):
+        return manager.get_component_instance(cls.target).send_to_server(data)
