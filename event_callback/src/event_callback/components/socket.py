@@ -3,16 +3,32 @@ import socket
 import asyncio
 import threading
 from functools import partial
-from typing import Any, Awaitable, Dict, List, Callable, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    Awaitable,
+    Dict,
+    List,
+    Callable,
+    Never,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
 try:
     import rospy
+    from std_msgs.msg import Empty
+    from event_callback_msg.srv import RegisterRequest
 except:
     rospy = None
-    
-from std_msgs.msg import Empty
-from mavproxy_ros.srv import RegisterRequest
-from event_callback.utils import rospy_is_shutdown()
+
+    class RegisterRequest:
+        pass
+
+
+from event_callback.utils import get_classname, rospy_is_shutdown
+
 # 组件基类与类型导入
 from event_callback.core import (
     R,
@@ -63,24 +79,19 @@ class BaseSocketManager:
             print(f"Socket数据解码失败: {str(e)}")
             return None
 
-    async def route_callback(self, data_str: str, addr: AddrType = None):
+    async def route_callback(self, data_str: Union[str, bytes], addr: AddrType = None):
         """通用回调路由核心：提取ID→映射URL→执行回调（服务端/客户端/TCP/UDP完全复用）"""
-        if not all(
-            [
-                self.component.id_extractor,
-                self.component.id_url_map,
-                self.component.callback_map,
-            ]
-        ):
-            print("Socket回调路由失败：未初始化ID提取函数/映射表/回调函数")
+        if not self.component.id_extractor:
+            print(f"{get_classname(self, False)}回调路由失败：未初始化ID提取函数")
             return
-
+        if not self.component.callback_map:
+            print(f"{get_classname(self, False)}回调路由失败：未初始化回调函数")
+            return
         # 提取业务ID并映射回调URL
         try:
-            data_id = self.component.id_extractor(data_str)
-            callback_url = self.component.id_url_map.get(data_id)
-            if not callback_url or callback_url not in self.component.callback_map:
-                print(f"无匹配的回调函数，ID: {data_id}")
+            callback_url = self.component.id_extractor(data_str)
+            if callback_url not in self.component.callback_map:
+                print(f"无匹配的回调函数，ID: {callback_url}")
                 return
         except Exception as e:
             print(f"Socket提取ID失败: {str(e)}")
@@ -90,11 +101,14 @@ class BaseSocketManager:
         try:
             callback = self.component.callback_map[callback_url]
             if asyncio.iscoroutinefunction(callback):
-                await callback(self.component.manager_instance, data_str, data_id, addr)
+                await callback(data_str)
             else:
-                callback(self.component.manager_instance, data_str, data_id, addr)
+                callback(data_str)
         except Exception as e:
             print(f"Socket执行回调失败: {str(e)}")
+            import traceback
+
+            traceback.print_exc()
 
 
 class SocketServerManager(BaseSocketManager):
@@ -102,7 +116,9 @@ class SocketServerManager(BaseSocketManager):
 
     def __init__(self, component):
         super().__init__(component)
-        self.connections: List[Tuple[socket.socket, AddrType]] = []  # TCP客户端连接列表（UDP忽略）
+        self.connections: List[Tuple[socket.socket, AddrType]] = (
+            []
+        )  # TCP客户端连接列表（UDP忽略）
 
     def add_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：添加客户端连接（线程安全，仅TCP生效）"""
@@ -158,7 +174,9 @@ class SocketClientManager(BaseSocketManager):
             print(f"{socket_type.name}客户端：成功连接服务端 {host}:{port}")
             return True
         except Exception as e:
-            print(f"{socket_type.name}客户端：连接服务端失败 {host}:{port}，原因: {str(e)}")
+            print(
+                f"{socket_type.name}客户端：连接服务端失败 {host}:{port}，原因: {str(e)}"
+            )
             self.conn = None
             self.addr = None
             self.is_connected = False
@@ -188,7 +206,9 @@ class SocketClientManager(BaseSocketManager):
                 self.component.max_reconnect != -1
                 and reconnect_count >= self.component.max_reconnect
             ):
-                print(f"Socket客户端：达到最大重连次数 {self.component.max_reconnect}，停止重连")
+                print(
+                    f"Socket客户端：达到最大重连次数 {self.component.max_reconnect}，停止重连"
+                )
                 break
             # 尝试重连（传socket_type修复原代码缺参bug）
             print(f"Socket客户端：第 {reconnect_count+1} 次重连服务端...")
@@ -207,10 +227,8 @@ class BaseSocketComponent(BaseComponent):
     服务端/客户端/TCP/UDP均继承此类，实现最大程度复用
     """
 
-    def __init__(
-        self, manager_instance: CallbackManager, is_server: bool, **config: Dict[str, Any]
-    ):
-        super().__init__(manager_instance, **config)
+    def __init__(self, is_server: bool, **config: Dict[str, Any]):
+        super().__init__(**config)
         self.is_server = is_server  # 标识服务端/客户端
         self._parse_common_config()  # 解析通用配置
         self._init_core_var()  # 初始化核心变量
@@ -240,23 +258,21 @@ class BaseSocketComponent(BaseComponent):
     def _parse_common_config(self):
         """解析服务端/客户端/TCP/UDP通用配置"""
         # 基础网络配置
-        self.socket_host = self.config.get(
-            "host", "0.0.0.0" if self.is_server else "127.0.0.1"
-        )
+        host = "0.0.0.0" if self.is_server else "127.0.0.1"
+        self.socket_host = self.config.get("host", host)
         self.socket_port = self.config.get("port", 12345)
         self.socket_type = self._get_socket_type()  # TCP/UDP类型标识
-        self.id_extractor: Optional[Callable] = self.config.get("parse_id")  # ID提取函数
-        self.id_url_map: Optional[Dict[str, str]] = self.config.get(
-            "id_url_map"
-        )  # ID->回调URL映射
+        self.id_extractor: Optional[Callable] = self.config.get("router")  # ID提取函数
         self.buffer_size = self.config.get("buffer_size", 256)  # 接收缓冲区大小
-        self.decode = self.config.get("decode", False) # 是否解码为字符串
+        self.decode = self.config.get("decode", False)  # 是否解码为字符串
         # ROS注册配置
         self.enable_register = self.config.get("register", True)
         self.ros_topic_prefix = self.config.get("ros_topic_prefix", "socket")
         # 客户端专属配置（服务端忽略）
-        self.reconnect_interval = self.config.get("reconnect_interval", 3.0)  # 重连间隔(秒)
-        self.max_reconnect = self.config.get("max_reconnect", -1)  # 最大重连次数(-1=无限)
+        # 重连间隔(秒)
+        self.reconnect_interval = self.config.get("reconnect_interval", 3.0)
+        # 最大重连次数(-1=无限)
+        self.max_reconnect = self.config.get("max_reconnect", -1)
         # 异步/线程配置
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.socket_thread: Optional[threading.Thread] = None
@@ -271,7 +287,7 @@ class BaseSocketComponent(BaseComponent):
         node_suffix = "server" if self.is_server else "client"
         node_name = self.config.get(
             "node_name",
-            f"{self.manager_instance.__class__.__name__.lower()}_{self.ros_topic_prefix}_{node_suffix}",
+            f"{self.__class__.__name__.lower()}_{self.ros_topic_prefix}_{node_suffix}",
         )
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
@@ -324,10 +340,8 @@ class BaseSocketComponent(BaseComponent):
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
         """实现BaseComponent抽象方法：通用回调注册入口（全场景复用）
-        @param callbacks: 回调列表，CallbackItem的args格式：(url, id_extractor, id_url_map)
+        @param callbacks: 回调列表，CallbackItem的args格式：(url)
                           - url: 回调唯一标识
-                          - id_extractor: 提取数据ID的自定义函数（入参：解码后字符串，返回：ID）
-                          - id_url_map: 字典 {数据ID: 回调url}，实现ID到回调的路由
         """
         for callback, args, kwargs in callbacks:
             callback_url = args[0]
@@ -335,10 +349,10 @@ class BaseSocketComponent(BaseComponent):
             # 线程安全注册回调
             with self.callback_lock:
                 self.callback_map[callback_url] = partial(callback, **kwargs)
-            print(
-                f"Socket{'Server' if self.is_server else 'Client'} 注册回调成功: "
-                f"{callback_url} -> {callback.__name__}"
-            )
+                print(
+                    f"Socket{'Server' if self.is_server else 'Client'} 注册回调成功: "
+                    f"{callback_url} -> {callback.__name__}"
+                )
 
     def _start_async_thread(self, coro):
         """通用异步线程启动方法：与ROS主线程解耦，全场景复用"""
@@ -360,13 +374,12 @@ class SocketServerComponent(BaseSocketComponent):
     配置通过type指定协议：type: tcp/udp
     :param str host: 监听IP
     :param int port: 监听端口
-    :param Callable parse_id: 数据包ID提取函数
-    :param Dict id_url_map: ID到回调URL的映射
+    :param Callable router: 数据包ID提取函数
     :param int buffer_size: 接收缓冲区大小
     """
 
-    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
-        super().__init__(manager_instance, is_server=True, **config)
+    def __init__(self, **config: Dict[str, Any]):
+        super().__init__(is_server=True, **config)
         self.server_sock: ConnType = None
         self.start_socket_server()  # 启动服务端
 
@@ -383,7 +396,9 @@ class SocketServerComponent(BaseSocketComponent):
                     if not data:
                         break
                     # 解码并路由回调
-                    if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
+                    if data_str := await self.socket_mgr.decode_data(
+                        data, decode=self.decode
+                    ):
                         await self.socket_mgr.route_callback(data_str, addr)
                 except Exception as e:
                     if self._is_nonblocking_normal_error(e):
@@ -407,7 +422,9 @@ class SocketServerComponent(BaseSocketComponent):
                 if not data:
                     continue
                 # 解码并路由回调（携带发送方地址）
-                if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
+                if data_str := await self.socket_mgr.decode_data(
+                    data, decode=self.decode
+                ):
                     await self.socket_mgr.route_callback(data_str, addr)
             except Exception as e:
                 if rospy_is_shutdown():
@@ -445,7 +462,9 @@ class SocketServerComponent(BaseSocketComponent):
         """服务端统一入口：按socket_type分支执行TCP/UDP逻辑"""
         # 初始化通用服务端套接字（TCP/UDP共用）
         self.server_sock = socket.socket(socket.AF_INET, self.socket_type)
-        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # 端口复用
+        self.server_sock.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # 端口复用
         self.server_sock.bind((self.socket_host, self.socket_port))
         self.server_sock.setblocking(False)
         self.loop = asyncio.get_event_loop()
@@ -471,15 +490,14 @@ class SocketClientComponent(BaseSocketComponent):
     :param tcp/udp type: 配置通过type指定协议
     :param str host: 服务端IP
     :param int port: 服务端端口
-    :param Callable parse_id: 数据包ID提取函数
-    :param Dict id_url_map: ID到回调URL的映射
+    :param Callable router: 数据包 -> callback_url
     :param int buffer_size: 接收缓冲区大小
     :param float reconnect_interval: 重连间隔（秒）
     :param int max_reconnect: 最大重连次数（-1=无限）
     """
 
-    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
-        super().__init__(manager_instance, is_server=False, **config)
+    def __init__(self, **config: Dict[str, Any]):
+        super().__init__(is_server=False, **config)
         self.start_socket_client()  # 启动客户端
 
     async def _recv_data_loop(self):
@@ -512,7 +530,9 @@ class SocketClientComponent(BaseSocketComponent):
                     self.loop.create_task(self.socket_mgr.auto_reconnect())
                     break
                 # 解码并路由回调
-                if data_str := await self.socket_mgr.decode_data(data, decode=self.decode):
+                if data_str := await self.socket_mgr.decode_data(
+                    data, decode=self.decode
+                ):
                     await self.socket_mgr.route_callback(data_str, addr)
             except Exception as e:
                 if not rospy_is_shutdown() and self.socket_mgr.is_connected:
@@ -559,24 +579,23 @@ class SocketClientComponent(BaseSocketComponent):
             self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        print(f"Socket客户端发送数据到服务端: {data_bytes}")
+        # print(f"Socket客户端发送数据到服务端: {data_bytes}")
 
 
 class sockets(BaseComponentHelper):
     target = SocketServerComponent
+
     @classmethod
     def recv(cls, url: str):
         return R._create_comp_decorator(SocketServerComponent, url)
-        
-    
+
     @classmethod
     def config(
         cls,
         host: str,
         port: int,
         socket_type: str,
-        parse_id: Optional[Callable] = None,
-        id_url_map: Optional[Dict[str, Any]] = None,
+        router: Optional[Callable] = None,
         decode: Optional[bool] = False,
         buffer_size: Optional[int] = 256,
         register: Optional[bool] = False,
@@ -586,8 +605,7 @@ class sockets(BaseComponentHelper):
         :param tcp/udp socket_type: 配置通过type指定协议
         :param str host: 监听IP
         :param int port: 监听端口
-        :param Callable parse_id: 数据包ID提取函数
-        :param Dict id_url_map: ID到回调URL的映射
+        :param Callable router: 数据包 -> callback_url
         :param bool decode: 是否需要解码为字符串
         :param int buffer_size: 接收缓冲区大小
         """
@@ -595,11 +613,10 @@ class sockets(BaseComponentHelper):
             "type": socket_type,
             "host": host,
             "port": port,
-            "parse_id": parse_id,
-            "id_url_map": id_url_map,
+            "router": router,
             "decode": decode,
             "buffer_size": buffer_size,
-            "register": register
+            "register": register,
         }
         return cls.target, kwargs
 
@@ -607,13 +624,13 @@ class sockets(BaseComponentHelper):
 class socketc(BaseComponentHelper):
     target: Type["SocketClientComponent"] = SocketClientComponent
 
+    @classmethod
     def config(
         cls,
         host: str,
         port: int,
         socket_type: str,
-        parse_id: Optional[Callable] = None,
-        id_url_map: Optional[Dict[str, Any]] = None,
+        router: Optional[Callable] = None,
         decode: Optional[bool] = False,
         buffer_size: Optional[int] = 256,
         register: Optional[bool] = False,
@@ -623,8 +640,7 @@ class socketc(BaseComponentHelper):
         :param tcp/udp socket_type: 配置通过type指定协议
         :param str host: 监听IP
         :param int port: 监听端口
-        :param Callable parse_id: 数据包ID提取函数
-        :param Dict id_url_map: ID到回调URL的映射
+        :param Callable router: 数据包ID提取函数
         :param bool decode: 是否需要解码为字符串
         :param int buffer_size: 接收缓冲区大小
         """
@@ -632,11 +648,10 @@ class socketc(BaseComponentHelper):
             "type": socket_type,
             "host": host,
             "port": port,
-            "parse_id": parse_id,
-            "id_url_map": id_url_map,
+            "router": router,
             "decode": decode,
             "buffer_size": buffer_size,
-            "register": register
+            "register": register,
         }
         return cls.target, kwargs
 

@@ -9,7 +9,7 @@ requirements = (
     .split("\n")
 )
 
-setup_kwargs = dict(
+setup(
     name="event_callback",  # 外部导入的Python包名，和event_callback/目录一致！
     version="0.0.0",
     author="Your Name",
@@ -21,8 +21,6 @@ setup_kwargs = dict(
     packages=find_packages(exclude=["scripts", "launch", "test"]),
     # 声明Python包的依赖（和requirements.txt一致，可选）
     install_requires=requirements,
-    package_dir={"": "src"},
-    python_requires=">=3.6",
+    package_dir={"": "event_callback/src"},
+    python_requires=">=3.8",
 )
-
-setup(**setup_kwargs)

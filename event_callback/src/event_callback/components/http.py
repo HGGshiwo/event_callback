@@ -1,5 +1,5 @@
 from types import MethodType
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Never, Optional, Union
 
 import uvicorn
 import asyncio
@@ -16,20 +16,30 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 try:
     import rospy
+    from std_msgs.msg import Empty
+    from event_callback_msg.srv import (
+        ProcessRequest,
+        Register,
+        RegisterResponse,
+        RegisterRequest,
+    )
 except:
-    pass
 
-# ROS相关消息/服务导入（仅保留框架必要的，删除业务相关）
-from std_msgs.msg import Empty
-from event_callback_msg.srv import (
-    ProcessRequest,
-    Register,
-    RegisterResponse,
-    RegisterRequest,
+    class RegisterResponse:
+        pass
+
+    class RegisterRequest:
+        pass
+
+
+# 组件基类导入
+from event_callback.core import (
+    R,
+    BaseComponentHelper,
+    BaseComponent,
+    CallbackItem,
+    CallbackManager,
 )
-
-# 组件基类导入（与之前的ROS组件保持一致）
-from event_callback.core import R, BaseComponentHelper, BaseComponent, CallbackItem, CallbackManager
 from typing import List
 
 
@@ -87,9 +97,8 @@ class HTTPComponent(BaseComponent):
             self.ws_connections = []
             self.base_data = {
                 "type": "state",
-                "connected": False,
-                "record": False,
                 "event": [],
+                "error": [],
             }
             self.lock = threading.Lock()  # 线程安全锁
 
@@ -114,6 +123,8 @@ class HTTPComponent(BaseComponent):
                     self.base_data.update(send_data)
                 elif data_type == "event":
                     self.base_data["event"].append(send_data)
+                elif data_type == "error":
+                    self.base_data["error"].append(send_data)
                 # 复制连接列表，避免长时间持有锁
                 ws_copy = self.ws_connections.copy()
 
@@ -130,17 +141,16 @@ class HTTPComponent(BaseComponent):
             except Exception:
                 self.remove_connection(ws)
 
-    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
+    def __init__(self, **config: Dict[str, Any]):
         """
         初始化FastAPI-ROS组件
-        :param manager_instance: BaseManager子类实例（组件基类要求）
         :param config: 组件配置参数，支持：
             - register: 布尔值，是否启用ROS register服务和do_register触发（默认False）
             - host: FastAPI服务地址（默认0.0.0.0）
             - port: FastAPI服务端口（默认8000）
             - static_dir: 静态文件目录（默认上级目录的static）
         """
-        super().__init__(manager_instance, **config)
+        super().__init__(**config)
         # 组件核心配置解析
         self.enable_register = self.config.get("register", False)
         self.fastapi_host = self.config.get("host", "0.0.0.0")
@@ -169,12 +179,14 @@ class HTTPComponent(BaseComponent):
         if self.enable_register:
             self._init_ros_register_service()
         self.start_fastapi_server()
-        print(f"FastapiRosComponent组件完成回调注册，register功能: {self.enable_register}")
+        print(
+            f"FastapiRosComponent组件完成回调注册，register功能: {self.enable_register}"
+        )
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点（全局仅一次，节点名优先取配置，否则用Manager类名）"""
         node_name = self.config.get(
-            "node_name", self.manager_instance.__class__.__name__.lower() + "_fastapi"
+            "node_name", self.__class__.__name__.lower() + "_fastapi"
         )
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
@@ -310,7 +322,8 @@ class HTTPComponent(BaseComponent):
         """
         for callback, args, kwargs in callbacks:
             # 不用partial是怕丢失__name__等meta信息
-            endpoint = MethodType(callback, self.manager_instance)
+            # endpoint = MethodType(callback, self.manager_instance)
+            endpoint = callback
             methods = kwargs.get("methods", [])
             methods = methods + list(args[1:])
             self.app.add_api_route(args[0], endpoint=endpoint, methods=methods)
@@ -326,6 +339,16 @@ class http(BaseComponentHelper):
     @classmethod
     def get(cls, url: str):
         return R._create_comp_decorator(cls.target, url, "GET")
+
+    @classmethod
+    def ws_send(
+        cls,
+        manager_instance: CallbackManager,
+        json: Dict,
+        data_type: Optional[str] = "state",
+    ):
+        comp = manager_instance.get_component_instance(cls.target)
+        return comp.ws_manager.publish(json, data_type)
 
     @classmethod
     def config(

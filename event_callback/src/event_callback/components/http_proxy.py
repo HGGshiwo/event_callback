@@ -1,20 +1,33 @@
+from event_callback.core import (
+    R,
+    BaseComponentHelper,
+    BaseComponent,
+    CallbackItem,
+    CallbackManager,
+)
+from typing import Dict, Any, List, Never, Type
 
-from event_callback.core import R, BaseComponentHelper, BaseComponent, CallbackItem, CallbackManager
-from typing import Dict, Any, List
-from event_callback_msg.srv import Register, ProcessRequest, ProcessRequestResponse
-from std_msgs.msg import Empty
 import json, traceback
+
 try:
     import rospy
+    from event_callback_msg.srv import Register, ProcessRequest, ProcessRequestResponse
+    from std_msgs.msg import Empty
 except:
-    pass
+
+    class ProcessRequest:  # type: ignore
+        pass
+
+    class ProcessRequestResponse:
+        pass
+
 
 class HTTP_ProxyComponent(BaseComponent):
     """ROS Http代理组件：负责ROS Service回调注册、Http-ROS映射、触发订阅处理，实现BaseComponent抽象方法"""
 
-    def __init__(self, manager_instance: CallbackManager, **config: Dict[str, Any]):
-        super().__init__(manager_instance, **config)
-        
+    def __init__(self, **config: Dict[str, Any]):
+        super().__init__(**config)
+
         self._init_ros_node()
         self._srv_registered = False  # Service注册状态标记，防止重复注册
         self._init_ros_srv_config()  # 初始化ROS服务相关配置
@@ -23,9 +36,7 @@ class HTTP_ProxyComponent(BaseComponent):
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点，优先使用配置中的节点名，无配置则使用Manager类名小写"""
-        node_name = self.config.get(
-            "node_name", self.manager_instance.__class__.__name__.lower()
-        )
+        node_name = self.config.get("node_name", self.__class__.__name__.lower())
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
 
@@ -65,7 +76,7 @@ class HTTP_ProxyComponent(BaseComponent):
                     # 解析请求体（ROS服务传参为JSON字符串）
                     req = json.loads(data.request)
                     # 执行Manager绑定的路由回调，传参并获取结果
-                    res = func(self.manager_instance, **req)
+                    res = func(**req)
                     # 构造成功响应（ROS服务响应为JSON字符串）
                     return ProcessRequestResponse(response=json.dumps(res))
                 except Exception as e:
@@ -92,7 +103,10 @@ class HTTP_ProxyComponent(BaseComponent):
                 raise ValueError(f"ROS HTTP mapping failed: {path} -> {srv_name}")
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
-        self._callbacks = callbacks
+        if self._callbacks is None:
+            self._callbacks = callbacks
+        else:
+            self._callbacks.extend(callbacks)
 
 
 class http_porxy(BaseComponentHelper):

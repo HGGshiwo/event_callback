@@ -1,7 +1,9 @@
 from functools import partial
 from typing import Any, Dict, Optional, Type
-import rospy
-
+try:
+    import rospy
+except:
+    pass
 from event_callback.core import R, BaseComponent, BaseComponentHelper, CallbackManager
 
 
