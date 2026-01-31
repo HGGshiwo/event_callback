@@ -351,7 +351,7 @@ class BaseSocketComponent(BaseComponent):
                 self.callback_map[callback_url] = partial(callback, **kwargs)
                 print(
                     f"Socket{'Server' if self.is_server else 'Client'} 注册回调成功: "
-                    f"{callback_url} -> {callback.__name__}"
+                    f"{callback_url.name} -> {callback.__name__}"
                 )
 
     def _start_async_thread(self, coro):

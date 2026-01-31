@@ -1,6 +1,7 @@
-from types import MethodType
-from typing import Any, Dict, Never, Optional, Union
+from typing import Any, Dict, Optional, Union
 
+from event_callback.components.http import MessageHandler, MessageType
+from event_callback.components.http.ui_config import BaseUIConfig
 import uvicorn
 import asyncio
 import json
@@ -95,16 +96,16 @@ class HTTPComponent(BaseComponent):
         def __init__(self, component):
             self.component = component  # 关联父组件，获取事件循环
             self.ws_connections = []
-            self.base_data = {
-                "type": "state",
-                "event": [],
-                "error": [],
-            }
             self.lock = threading.Lock()  # 线程安全锁
+            self.messsage_handler_map: Dict[MessageType, MessageHandler] = {}
 
         async def add_connection(self, ws: WebSocket):
             """添加WS连接，首次发送基础状态数据"""
-            await ws.send_json(self.base_data)
+            data = {}
+            with self.lock:
+                for handler in self.messsage_handler_map.values():
+                    data.update(handler.on_connect())
+            await ws.send_json(data)
             with self.lock:
                 self.ws_connections.append(ws)
 
@@ -114,24 +115,21 @@ class HTTPComponent(BaseComponent):
                 if ws in self.ws_connections:
                     self.ws_connections.remove(ws)
 
-        def publish(self, data: dict, data_type: str = "state"):
+        def publish(self, data: Dict[str, Any], data_type: MessageType):
             """广播消息到所有WS连接（线程安全，异步非阻塞发送）"""
             with self.lock:
                 # 封装消息类型，更新基础数据（保留原有数据结构，无业务逻辑）
-                send_data = {**data, "type": data_type}
-                if data_type == "state":
-                    self.base_data.update(send_data)
-                elif data_type == "event":
-                    self.base_data["event"].append(send_data)
-                elif data_type == "error":
-                    self.base_data["error"].append(send_data)
+                if data_type not in self.messsage_handler_map:
+                    self.messsage_handler_map[data_type] = data_type.value()
+                message_handler = self.messsage_handler_map[data_type]
+                data = message_handler.on_send(data)
                 # 复制连接列表，避免长时间持有锁
                 ws_copy = self.ws_connections.copy()
 
             # 异步发送消息到每个连接
             for ws in ws_copy:
                 asyncio.run_coroutine_threadsafe(
-                    self._safe_send(ws, send_data), self.component.loop
+                    self._safe_send(ws, data), self.component.loop
                 )
 
         async def _safe_send(self, ws: WebSocket, data: dict):
@@ -256,6 +254,10 @@ class HTTPComponent(BaseComponent):
             except Exception:
                 ws_manager.remove_connection(websocket)
 
+        @app.get("/page_config")
+        async def get_page_config():
+            return {"status": "success", "msg": BaseUIConfig.create_config()}
+
     def _init_ros_register_service(self) -> None:
         """初始化ROS register服务和do_register发布器（enable_register=True时调用）"""
         # 注册ROS /register服务，用于ROS端动态映射FastAPI路由
@@ -345,8 +347,10 @@ class http(BaseComponentHelper):
         cls,
         manager_instance: CallbackManager,
         json: Dict,
-        data_type: Optional[str] = "state",
+        data_type: Optional[MessageType] = None,
     ):
+        if data_type is None:
+            data_type = MessageType.STATE
         comp = manager_instance.get_component_instance(cls.target)
         return comp.ws_manager.publish(json, data_type)
 

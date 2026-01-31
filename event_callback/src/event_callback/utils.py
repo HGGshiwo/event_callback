@@ -69,3 +69,86 @@ except:
 def rospy_is_shutdown():
     return rospy is not None and rospy.is_shutdown()
 
+class EnumMeta(type):
+    """自定义枚举元类，实现可继承的枚举核心逻辑"""
+    def __new__(cls, name, bases, attrs):
+        # 收集所有枚举成员（排除特殊方法/属性，如__module__、__doc__等）
+        enum_members = {}
+        # 先合并父类的枚举成员（实现继承）
+        for base in bases:
+            if hasattr(base, '_members'):
+                enum_members.update(base._members)
+        
+        # 收集当前类的枚举成员，去重（子类成员覆盖父类同名成员）
+        for attr_name, attr_value in attrs.items():
+            # 排除以下划线开头的特殊属性/方法
+            if not attr_name.startswith('_'):
+                # 检查值是否重复（保证枚举值唯一性）
+                if attr_value in enum_members.values():
+                    raise ValueError(f"枚举值 {attr_value} 已存在，无法重复定义")
+                enum_members[attr_name] = attr_value
+        
+        # 创建枚举类实例
+        enum_class = super().__new__(cls, name, bases, attrs)
+        # 存储所有枚举成员（名称->值）
+        enum_class._members = enum_members
+        # 反向映射（值->名称），用于通过值查找成员
+        enum_class._value_to_name = {v: k for k, v in enum_members.items()}
+        
+        # 为枚举类动态添加成员属性（不可变）
+        for member_name, member_value in enum_members.items():
+            # 封装枚举成员为实例，包含name和value属性
+            member = enum_class._create_member(member_name, member_value)
+            setattr(enum_class, member_name, member)
+        
+        return enum_class
+    
+    @staticmethod
+    def _create_member(name, value):
+        """创建枚举成员实例，保证不可变"""
+        class EnumMember:
+            __slots__ = ('name', 'value')  # 限制属性，提升性能且不可动态添加属性
+            def __init__(self, name, value):
+                super().__setattr__("name", name)
+                super().__setattr__("value", value)
+            
+            def __repr__(self):
+                return f"<{self.name}: {self.value}>"
+            
+            def __eq__(self, other):
+                if isinstance(other, EnumMember):
+                    return self.value == other.value
+                return self.value == other
+            
+            def __hash__(self):
+                return hash(self.value)
+                
+            
+            # 阻止修改属性，保证不可变性
+            def __setattr__(self, key, value):
+                if key in self.__slots__:
+                    raise AttributeError("枚举成员属性不可修改")
+                super().__setattr__(key, value)
+        
+        return EnumMember(name, value)
+
+
+class BaseEnum(metaclass=EnumMeta):
+    """可继承的基础枚举类，封装核心访问方法"""
+    _members = {}       # 存储：名称 -> 值
+    _value_to_name = {} # 存储：值 -> 名称
+    
+    @classmethod
+    def __call__(cls, value):
+        """模拟原生Enum：通过值获取成员（如 Color(1)）"""
+        member = cls.get(value)
+        if not member:
+            raise ValueError(f"{value} 不是 {cls.__name__} 的有效枚举值")
+        return member
+    
+    @classmethod
+    def __getitem__(cls, name):
+        """通过名称获取成员（如 Color['RED']）"""
+        if name not in cls._members:
+            raise KeyError(f"{name} 不是 {cls.__name__} 的有效枚举名称")
+        return getattr(cls, name)
