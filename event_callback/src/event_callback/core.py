@@ -28,6 +28,8 @@ class Registery:
     _callback_map: Final[Dict[str, Dict[str, List[CallbackItem]]]] = {}
     # 组件注册表: classname -> comp_class
     _component_map: Dict[str, Type["BaseComponent"]] = {}
+    # 前端组件配置表 ui_type -> ui_id
+    _config_store = {}
 
     def __new__(cls):
         """单例模式：保证全局只有一个R实例"""

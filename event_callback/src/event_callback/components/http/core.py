@@ -1,7 +1,8 @@
 from typing import Any, Dict, Optional, Union
 
+from attr import dataclass
 from event_callback.components.http import MessageHandler, MessageType
-from event_callback.components.http.ui_config import BaseUIConfig
+from event_callback.components.http.ui_config import APIConfig, BaseUIConfig
 import uvicorn
 import asyncio
 import json
@@ -256,7 +257,7 @@ class HTTPComponent(BaseComponent):
 
         @app.get("/page_config")
         async def get_page_config():
-            return {"status": "success", "msg": BaseUIConfig.create_config()}
+            return {"status": "success", "msg": BaseUIConfig.generate_json()}
 
     def _init_ros_register_service(self) -> None:
         """初始化ROS register服务和do_register发布器（enable_register=True时调用）"""
@@ -335,12 +336,17 @@ class http(BaseComponentHelper):
     target = HTTPComponent
 
     @classmethod
-    def post(cls, url: str):
-        return R._create_comp_decorator(cls.target, url, "POST")
+    def _base(cls, url: str, method: str, api_config: APIConfig):
+        api_config.update(url, method)
+        return R._create_comp_decorator(cls.target, url, method)
 
     @classmethod
-    def get(cls, url: str):
-        return R._create_comp_decorator(cls.target, url, "GET")
+    def post(cls, url: str, api_config: APIConfig = None):
+        return cls._base(url, "POST", api_config)
+
+    @classmethod
+    def get(cls, url: str, api_config: APIConfig = None):
+        return cls._base(url, "GET", api_config)
 
     @classmethod
     def ws_send(
