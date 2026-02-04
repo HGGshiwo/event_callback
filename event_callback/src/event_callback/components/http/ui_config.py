@@ -1,7 +1,6 @@
-import json
-from dataclasses import dataclass, asdict, field, fields
+from dataclasses import dataclass, asdict, field
 from enum import Enum
-from typing import Dict, List, Any, Optional, TypeVar
+from typing import Dict, List, Any, Optional, TypeVar, Callable
 
 from event_callback.core import R
 from event_callback.utils import get_classname
@@ -37,8 +36,39 @@ class FormItemType(Enum):
     SWITCH = "switch"
 
 
+class ToDictMixin:
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        转换为字典（过滤None值、函数，枚举转字符串，嵌套配置递归序列化）
+        :return: 格式化的配置字典
+        """
+
+        raw_dict = asdict(self)
+        return {
+            k: ToDictMixin.serialize(v)
+            for k, v in raw_dict.items()
+            if v is not None and not callable(v)
+        }
+
+    @staticmethod
+    def serialize(obj):
+        """递归序列化：处理枚举、列表、字典和配置实例"""
+        if isinstance(obj, Enum):
+            return obj.value
+        elif isinstance(obj, (list, tuple)):
+            return [ToDictMixin.serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: ToDictMixin.serialize(v) for k, v in obj.items()}
+        elif callable(obj):
+            return None  # 过滤函数类型
+        elif hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        return obj
+
+
 @dataclass
-class BaseUIConfig:
+class BaseUIConfig(ToDictMixin):
     """所有组件配置的基类，提供通用序列化和更新能力"""
 
     config_id: str = field(default=None)  # 组件唯一标识
@@ -64,48 +94,6 @@ class BaseUIConfig:
         cls._id_cnt += 1
         return _id
 
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        转换为字典（过滤None值，枚举转字符串）
-        :return: 格式化的配置字典
-        """
-
-        def _convert(value):
-            if isinstance(value, Enum):
-                return value.value
-            elif isinstance(value, (list, tuple)):
-                return [_convert(item) for item in value]
-            elif isinstance(value, dict):
-                return {k: _convert(v) for k, v in value.items()}
-            return value
-
-        raw_dict = asdict(self)
-        return {k: _convert(v) for k, v in raw_dict.items() if v is not None}
-
-    def update(self, **kwargs) -> None:
-        """
-        动态更新配置项（支持字符串自动转枚举）
-        :param kwargs: 待更新的配置项键值对
-        :raise ValueError: 配置项不存在或枚举值无效
-        """
-        for key, value in kwargs.items():
-            if not hasattr(self, key):
-                raise ValueError(f"组件{self.id}不支持配置项：{key}")
-
-            # 处理枚举类型：字符串自动转换为枚举实例
-            field_type = next(f for f in fields(self) if f.name == key)
-            if isinstance(field_type, type) and issubclass(field_type, Enum):
-                if isinstance(value, str):
-                    try:
-                        value = field_type(value)
-                    except ValueError:
-                        valid_values = [e.value for e in field_type]
-                        raise ValueError(
-                            f"配置项{key}有效值：{valid_values}，传入：{value}"
-                        )
-
-            setattr(self, key, value)
-
     @staticmethod
     def generate_json() -> Dict[str, Any]:
         """
@@ -113,41 +101,21 @@ class BaseUIConfig:
         :return: JSON对象
         """
 
-        def serialize(obj):
-            """递归序列化：处理枚举、列表、字典和配置实例"""
-            if isinstance(obj, Enum):
-                return obj.value
-            elif isinstance(obj, (list, tuple)):
-                return [serialize(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {k: serialize(v) for k, v in obj.items()}
-            elif hasattr(obj, "to_dict"):
-                return obj.to_dict()
-            return obj
-
         json_data = {}
         for component_type, configs in R._config_store.items():
             json_data[component_type] = {
-                config_id: serialize(config) for config_id, config in configs.items()
+                config_id: ToDictMixin.serialize(config)
+                for config_id, config in configs.items()
             }
         return json_data
 
 
 @dataclass
-class BaseFormItemConfig:
+class BaseFormItemConfig(ToDictMixin):
     """表单控件基类"""
 
     name: str  # 控件显示名称
     type: FormItemType  # 控件类型（枚举）
-
-    def to_dict(self) -> Dict[str, Any]:
-        """序列化表单控件配置"""
-        raw_dict = asdict(self)
-        return {
-            k: (v.value if isinstance(v, Enum) else v)
-            for k, v in raw_dict.items()
-            if v is not None
-        }
 
 
 @dataclass
@@ -210,7 +178,66 @@ class CheckboxFormItemConfig(BaseFormItemConfig):
     default: Optional[bool] = None
 
 
-# -------------------------- 业务组件配置类 --------------------------
+@dataclass
+class SubmitConfig(BaseUIConfig):
+    """提交配置：仅请求，无后续操作"""
+
+    config_type: str = "submit"
+    url: Optional[str] = None  # 请求地址
+    method: Optional[str] = None  # 请求方法（GET/POST等）
+
+
+@dataclass
+class ToastConfig(ToDictMixin):
+    """弹窗提示配置：请求后弹窗"""
+
+    config_type: str = "toast"
+    url: Optional[str] = None  # 请求地址
+    method: Optional[str] = None  # 请求方法
+    format: Optional[Callable[[Any], str]] = None  # 格式化提示文本的函数
+
+
+@dataclass
+class CopyConfig(BaseUIConfig):
+    """拷贝配置：请求后拷贝值"""
+
+    config_type: str = "copy"
+    url: Optional[str] = None  # 请求地址
+    method: Optional[str] = None  # 请求方法
+
+
+@dataclass
+class BaseButtonConfig:
+    """按钮配置：核心触发配置，关联不同Target"""
+
+    config_type: str = "button"
+    name: str = None  # 显示文字
+    order: int = 9999  # 显示顺序
+    target: Optional[BaseUIConfig] = None  # 触发的目标配置（Form/Toast/Copy/Submit）
+
+
+@dataclass
+class PrimaryButtonConfig(BaseButtonConfig, BaseUIConfig):
+    pass
+
+
+@dataclass
+class InnerButtonConfig(BaseButtonConfig, ToDictMixin):
+    pass
+
+
+@dataclass
+class FormConfig(ToDictMixin):
+    """表单配置：请求后打开表单，支持嵌套按钮配置"""
+    title: str = "表单名称"
+    config_type: str = "form"
+    url: Optional[str] = None  # 请求地址（获取表单初始数据）
+    method: Optional[str] = None  # 请求方法
+    items: List[BaseFormItemConfig] = field(default_factory=list)  # 表单项列表
+    submit: Optional[InnerButtonConfig] = None  # 表单提交按钮配置
+    on_change: Optional[InnerButtonConfig] = None  # 表单项变更触发的按钮配置
+
+
 @dataclass
 class StatusConfig(BaseUIConfig):
     """状态栏配置"""
@@ -218,30 +245,6 @@ class StatusConfig(BaseUIConfig):
     config_type: str = "state"
     name: str = None  # 显示名称
     default: str = "未知"
-
-
-@dataclass
-class ButtonConfig(BaseUIConfig):
-    """按钮配置"""
-
-    config_type: str = "button"
-    name: str = None  # 显示文字
-    order: int = 9999  # 显示顺序
-    button_type: ButtonEventType = None  # 触发事件类型
-    url: Optional[str] = None  # 请求地址（可选）
-    method: Optional[str] = None  # 请求方法（可选）
-    form_id: Optional[str] = None
-
-
-@dataclass
-class FormConfig(BaseUIConfig):
-    """表单配置"""
-
-    config_type: str = "form"
-    target_id: str = None  # 按钮的id
-    url: Optional[str] = None  # 提交地址（可选）
-    method: Optional[str] = None  # 提交方法（可选）
-    items: List[BaseFormItemConfig] = field(default_factory=list)  # 表单项列表
 
 
 @dataclass
@@ -256,6 +259,7 @@ class LogboxConfig(BaseUIConfig):
     borderColor: str = None  # 边框色
 
 
+# 日志框默认配置（保留原有）
 LogboxConfig(
     type=LogboxDataType.ERROR,
     color="#D83030",
@@ -296,15 +300,3 @@ class JoystickConfig(BaseUIConfig):
     config_type: str = "joystick"
     url: Optional[str] = None  # 控制请求地址（可选）
     method: Optional[str] = None  # 控制请求方法（可选）
-
-
-@dataclass
-class APIConfig:
-    button_config: BaseUIConfig = field(default=None)
-    form_config: FormConfig = field(default=None)
-
-    def update(self, url: str, method: str):
-        if self.button_config is not None:
-            self.button_config.update(url=url, method=method)
-        if self.form_config is not None:
-            self.form_config.update(url=url, method=method)

@@ -37,6 +37,7 @@ class EventMessageHandler(MessageHandler):
         """为消息添加时间戳"""
         timestamp = int(1000 * datetime.datetime.now().timestamp())
         data["timestamp"] = timestamp
+        data["type"] = self.name
         self.state.append(copy.deepcopy(data))
         return data
 

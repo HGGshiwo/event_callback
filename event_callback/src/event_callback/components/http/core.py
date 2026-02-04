@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional, Union
 
 from attr import dataclass
 from event_callback.components.http import MessageHandler, MessageType
-from event_callback.components.http.ui_config import APIConfig, BaseUIConfig
+from event_callback.components.http.ui_config import BaseUIConfig
 import uvicorn
 import asyncio
 import json
@@ -124,20 +124,21 @@ class HTTPComponent(BaseComponent):
                     self.messsage_handler_map[data_type] = data_type.value()
                 message_handler = self.messsage_handler_map[data_type]
                 data = message_handler.on_send(data)
-                # 复制连接列表，避免长时间持有锁
-                ws_copy = self.ws_connections.copy()
 
-            # 异步发送消息到每个连接
-            for ws in ws_copy:
-                asyncio.run_coroutine_threadsafe(
-                    self._safe_send(ws, data), self.component.loop
-                )
+                # 异步发送消息到每个连接
+                for ws in self.ws_connections:
+                    asyncio.run_coroutine_threadsafe(
+                        self._safe_send(ws, data), self.component.loop
+                    )
 
         async def _safe_send(self, ws: WebSocket, data: dict):
             """安全发送WS消息，异常则自动移除连接"""
             try:
                 await ws.send_json(data)
             except Exception:
+                import traceback
+
+                traceback.print_exc()
                 self.remove_connection(ws)
 
     def __init__(self, **config: Dict[str, Any]):
@@ -249,10 +250,17 @@ class HTTPComponent(BaseComponent):
             try:
                 # 心跳检测（超时无消息则循环，避免永久阻塞）
                 while True:
-                    await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                    text = await websocket.receive_text()
+                    print(text)
             except (WebSocketDisconnect, asyncio.TimeoutError):
+                import traceback
+
+                traceback.print_exc()
                 ws_manager.remove_connection(websocket)
             except Exception:
+                import traceback
+
+                traceback.print_exc()
                 ws_manager.remove_connection(websocket)
 
         @app.get("/page_config")
@@ -336,17 +344,19 @@ class http(BaseComponentHelper):
     target = HTTPComponent
 
     @classmethod
-    def _base(cls, url: str, method: str, api_config: APIConfig):
-        api_config.update(url, method)
+    def _base(cls, url: str, method: str):
         return R._create_comp_decorator(cls.target, url, method)
 
     @classmethod
-    def post(cls, url: str, api_config: APIConfig = None):
-        return cls._base(url, "POST", api_config)
+    def post(
+        cls,
+        url: str,
+    ):
+        return cls._base(url, "POST")
 
     @classmethod
-    def get(cls, url: str, api_config: APIConfig = None):
-        return cls._base(url, "GET", api_config)
+    def get(cls, url: str):
+        return cls._base(url, "GET")
 
     @classmethod
     def ws_send(
