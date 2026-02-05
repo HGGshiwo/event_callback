@@ -264,7 +264,7 @@ const FormModal = ({
         onValuesChange={onFormChange}
         initialValues={initialValues}
         preserve={false}
-        layout="vertical"
+        layout="horizontal"
       >
         {Object.entries(formConfig.items).map(([key, item]) =>
           renderFormItem(key, item),

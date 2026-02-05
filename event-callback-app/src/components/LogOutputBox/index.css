@@ -112,8 +112,8 @@
 .log-content {
   flex: 1;
   color: #1e293b;
-  word-break: break-all;
   font-weight: 500;
+  text-wrap: nowrap;
 }
 
 /* 滚动条重新设计：适配白色背景，更细腻 */

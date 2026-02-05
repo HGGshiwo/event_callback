@@ -567,7 +567,7 @@ class SocketClientComponent(BaseSocketComponent):
         :param data: 待发送数据（字符串/字节流）
         """
         if not self.socket_mgr.is_connected or not self.socket_mgr.conn:
-            print("Socket客户端：未连接服务端，发送数据失败")
+            # print("Socket客户端：未连接服务端，发送数据失败")
             return
         # 统一转换为字节流
         data_bytes = data.encode("utf8") if isinstance(data, str) else data
@@ -658,3 +658,9 @@ class socketc(BaseComponentHelper):
     @classmethod
     def send_to_server(cls, manager: CallbackManager, data):
         return manager.get_component_instance(cls.target).send_to_server(data)
+
+    @classmethod
+    def is_connected(cls, manager: CallbackManager):
+        """判断socket clinet连接状态"""
+        comp = manager.get_component_instance(cls.target)
+        return comp.socket_mgr.is_connected and comp.socket_mgr.conn

@@ -5,6 +5,7 @@ import { AppProvider } from "./context/AppContext";
 import { VirtualJoystickGroup } from "./components/VirtualJoystick";
 import LogOutputBox from "./components/LogOutputBox/indext";
 import { ConfigProvider, type ThemeConfig } from "antd";
+import { Table } from "./components/Table";
 
 function App() {
   const theme: ThemeConfig = {
@@ -23,6 +24,7 @@ function App() {
           <ButtonGroup />
           <VirtualJoystickGroup />
           <LogOutputBox />
+          {/* <Table /> */}
         </div>
       </ConfigProvider>
     </AppProvider>

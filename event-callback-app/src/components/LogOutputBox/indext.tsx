@@ -134,10 +134,10 @@ const LogOutputBox: FC<LogOutputBoxProps> = ({
         {filteredLogList.length === 0 ? (
           <div className="empty-log">暂无日志</div>
         ) : (
-          filteredLogList.map((log) => {
+          filteredLogList.map((log, idx) => {
             const logConfig = getLogConfigByType(log.type);
             return (
-              <div key={log.time} className="log-item">
+              <div key={idx} className="log-item">
                 <span
                   className="log-type-tag"
                   style={{
