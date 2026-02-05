@@ -567,7 +567,7 @@ class SocketClientComponent(BaseSocketComponent):
         :param data: 待发送数据（字符串/字节流）
         """
         if not self.socket_mgr.is_connected or not self.socket_mgr.conn:
-            # print("Socket客户端：未连接服务端，发送数据失败")
+            print("Socket客户端：未连接服务端，发送数据失败")
             return
         # 统一转换为字节流
         data_bytes = data.encode("utf8") if isinstance(data, str) else data
@@ -579,7 +579,7 @@ class SocketClientComponent(BaseSocketComponent):
             self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        # print(f"Socket客户端发送数据到服务端: {data_bytes}")
+        print(f"Socket客户端发送数据到服务端: {data_bytes.hex()}")
 
 
 class sockets(BaseComponentHelper):
