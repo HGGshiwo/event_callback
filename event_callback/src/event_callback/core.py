@@ -12,7 +12,7 @@ from typing import (
     TypeVar,
 )
 
-from event_callback.utils import get_classname
+from event_callback.utils import get_classname, throttle
 from event_callback.types import CallbackItem, Decorator
 
 
@@ -38,7 +38,11 @@ class Registery:
         return cls._instance
 
     def _create_comp_decorator(
-        self, comp_cls: Type["BaseComponent"], *args: Any, **kwargs: Any
+        self,
+        comp_cls: Type["BaseComponent"],
+        *args: Any,
+        frequency: Optional[float] = None,
+        **kwargs: Any,
     ) -> Decorator:
         """为指定组件生成装饰器，记录函数及装饰器参数到临时注册表"""
         comp_name = get_classname(comp_cls, False)
@@ -49,6 +53,8 @@ class Registery:
             class_name = get_classname(func, True)
             comp_map = self._callback_map.get(class_name, {})
             callback_list = comp_map.get(comp_name, [])
+            if frequency is not None:
+                func = throttle(frequency=frequency)(func)
             callback_list.append((func, args, kwargs))
             comp_map[comp_name] = callback_list
             self._callback_map[class_name] = comp_map

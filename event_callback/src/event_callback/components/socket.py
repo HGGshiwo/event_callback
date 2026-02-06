@@ -579,15 +579,15 @@ class SocketClientComponent(BaseSocketComponent):
             self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        print(f"Socket客户端发送数据到服务端: {data_bytes.hex()}")
+        print(f"Socket客户端发送数据到服务端: 0x{data_bytes.hex()}")
 
 
 class sockets(BaseComponentHelper):
     target = SocketServerComponent
 
     @classmethod
-    def recv(cls, url: str):
-        return R._create_comp_decorator(SocketServerComponent, url)
+    def recv(cls, url: str, frequency: Optional[int] = None):
+        return R._create_comp_decorator(SocketServerComponent, url, frequency=frequency)
 
     @classmethod
     def config(
@@ -656,7 +656,7 @@ class socketc(BaseComponentHelper):
         return cls.target, kwargs
 
     @classmethod
-    def send_to_server(cls, manager: CallbackManager, data):
+    def send_to_server(cls, manager: CallbackManager, data: Dict[str, Any]):
         return manager.get_component_instance(cls.target).send_to_server(data)
 
     @classmethod

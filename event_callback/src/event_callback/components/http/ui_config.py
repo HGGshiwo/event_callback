@@ -34,6 +34,7 @@ class FormItemType(Enum):
     SELECT = "select"
     CHECKBOX = "checkbox"
     SWITCH = "switch"
+    RADIO = "radio"
 
 
 class ToDictMixin:
@@ -163,8 +164,17 @@ class SelectFormItemConfig(BaseFormItemConfig):
     """下拉框控件配置"""
 
     type: FormItemType = field(default=FormItemType.SELECT, init=False)
-    options: List[Dict[str, str]]
+    options: Dict[str, str]
     multiple: bool = False
+    default: Optional[str | List[str]] = None
+
+
+@dataclass
+class RadioFormItemConfig(BaseFormItemConfig):
+    """单选框控件配置，少于5个选项推荐使用这个"""
+
+    type: FormItemType = field(default=FormItemType.RADIO, init=False)
+    options: Dict[str, str]
     default: Optional[str | List[str]] = None
 
 
@@ -229,6 +239,7 @@ class InnerButtonConfig(BaseButtonConfig, ToDictMixin):
 @dataclass
 class FormConfig(ToDictMixin):
     """表单配置：请求后打开表单，支持嵌套按钮配置"""
+
     title: str = "表单名称"
     config_type: str = "form"
     url: Optional[str] = None  # 请求地址（获取表单初始数据）

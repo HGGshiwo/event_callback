@@ -20,6 +20,7 @@ class StateMessageHandler(MessageHandler):
 
     def on_send(self, data: Dict[str, Any]):
         self.state.update(**copy.deepcopy(data))
+        data["type"] = "state"
         return data
 
     def on_connect(self):

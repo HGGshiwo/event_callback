@@ -12,7 +12,7 @@ import { httpRequest } from "../utils";
 // 摇杆移动时的回调参数类型
 export interface JoystickMoveData {
   x: number; // 水平偏移比例 -1(左) ~ 1(右)
-  y: number; // 垂直偏移比例 -1(上) ~ 1(下)
+  y: number; // 垂直偏移比例 -1(下) ~ 1(上)
   isDragging: boolean; // 是否正在拖拽摇杆
 }
 
@@ -61,8 +61,8 @@ const VirtualJoystick: React.FC<VirtualJoystickProps> = (props) => {
   const [dotOffset, setDotOffset] = useState({ x: 0, y: 0 });
 
   // 计算核心常量
-  const baseRadius = size / 2; // 底座半径
-  const dotRadius = dotSize / 2; // 核心半径
+  const baseRadius = size! / 2; // 底座半径
+  const dotRadius = dotSize! / 2; // 核心半径
   const maxMoveDistance = baseRadius - dotRadius; // 核心最大可移动距离（防止超出底座）
 
   // 通用：获取触摸/鼠标点相对于摇杆中心的偏移坐标
@@ -95,7 +95,7 @@ const VirtualJoystick: React.FC<VirtualJoystickProps> = (props) => {
   const triggerMoveCallback = (x: number, y: number, dragging: boolean) => {
     onMove({
       x: maxMoveDistance === 0 ? 0 : x / maxMoveDistance,
-      y: maxMoveDistance === 0 ? 0 : y / maxMoveDistance,
+      y: maxMoveDistance === 0 ? 0 : -y / maxMoveDistance, // y的正方向是反的
       isDragging: dragging,
     });
   };
@@ -121,10 +121,10 @@ const VirtualJoystick: React.FC<VirtualJoystickProps> = (props) => {
   };
 
   // 拖拽中（鼠标移动/触摸移动）
-  const handleDrag = (e: MouseEvent | TouchEvent) => {
+  const handleDrag = <T extends globalThis.MouseEvent | globalThis.TouchEvent>(e: T) => {
     if (!isDragging || !joystickRef.current) return;
 
-    const point = "touches" in e ? e.touches[0] : e;
+    const point: globalThis.Touch | globalThis.MouseEvent = "touches" in e ? e.touches[0] : e;
     const offset = getRelativeOffset(point.clientX, point.clientY);
     const clamped = clampOffset(offset.x, offset.y);
 
@@ -147,9 +147,9 @@ const VirtualJoystick: React.FC<VirtualJoystickProps> = (props) => {
   useEffect(() => {
     if (isDragging) {
       // 绑定全局事件
-      document.addEventListener("mousemove", handleDrag);
+      document.addEventListener("mousemove", handleDrag<globalThis.MouseEvent>);
       document.addEventListener("mouseup", handleEnd);
-      document.addEventListener("touchmove", handleDrag, { passive: false }); // passive: false 才能阻止默认行为
+      document.addEventListener("touchmove", handleDrag<globalThis.TouchEvent>, { passive: false }); // passive: false 才能阻止默认行为
       document.addEventListener("touchend", handleEnd);
       document.addEventListener("touchcancel", handleEnd); // 处理触摸意外中断（如弹窗、滑动）
     }

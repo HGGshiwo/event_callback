@@ -344,19 +344,16 @@ class http(BaseComponentHelper):
     target = HTTPComponent
 
     @classmethod
-    def _base(cls, url: str, method: str):
-        return R._create_comp_decorator(cls.target, url, method)
+    def _base(cls, url: str, method: str, frequency: float):
+        return R._create_comp_decorator(cls.target, url, method, frequency=frequency)
 
     @classmethod
-    def post(
-        cls,
-        url: str,
-    ):
-        return cls._base(url, "POST")
+    def post(cls, url: str, frequency: Optional[float] = None):
+        return cls._base(url, "POST", frequency=frequency)
 
     @classmethod
-    def get(cls, url: str):
-        return cls._base(url, "GET")
+    def get(cls, url: str, frequency: Optional[float] = None):
+        return cls._base(url, "GET", frequency=frequency)
 
     @classmethod
     def ws_send(
@@ -368,6 +365,8 @@ class http(BaseComponentHelper):
         if data_type is None:
             data_type = MessageType.STATE
         comp = manager_instance.get_component_instance(cls.target)
+        if comp is None: # 组件没有初始化完成，不允许调用
+            return 
         return comp.ws_manager.publish(json, data_type)
 
     @classmethod

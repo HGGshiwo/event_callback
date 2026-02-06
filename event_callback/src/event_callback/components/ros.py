@@ -1,5 +1,6 @@
 from functools import partial
 from typing import Any, Dict, Optional, Type
+
 try:
     import rospy
 except:
@@ -42,8 +43,16 @@ class ros(BaseComponentHelper):
     target = ROSComponent
 
     @classmethod
-    def topic(cls, topic_name: str, topic_type: Type, queue_size: Optional[int] = None):
-        R._create_comp_decorator(cls.target, topic_name, topic_type, queue_size)
+    def topic(
+        cls,
+        topic_name: str,
+        topic_type: Type,
+        queue_size: Optional[int] = None,
+        frequency: Optional[float] = None,
+    ):
+        R._create_comp_decorator(
+            cls.target, topic_name, topic_type, queue_size, frequency=frequency
+        )
 
     @classmethod
     def config(cls):

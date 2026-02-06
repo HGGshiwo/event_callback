@@ -7,6 +7,7 @@ import {
   Slider,
   Switch,
   Select,
+  Radio,
 } from "antd";
 import { createRoot } from "react-dom/client";
 import { httpRequest } from "../utils";
@@ -16,14 +17,14 @@ import { useCallback, useEffect, useState } from "react";
 export interface FormItemConfig {
   name: string; // 表单标签名
   id: string; // 表单字段唯一标识
-  type: "input" | "slider" | "number" | "switch" | "select";
+  type: "input" | "slider" | "number" | "switch" | "select" | "radio";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   default?: any; // 字段默认值
   max?: number; // 数值/滑块最大值
   min?: number; // 数值/滑块最小值
   step?: number; // 数值/滑块步长
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: Array<{ name: string; [key: string]: any }>; // 下拉框选项
+  options?: Record<string, any> | object; // 下拉框选项
   required?: boolean; // 是否必填（扩展字段）
 }
 
@@ -77,7 +78,7 @@ const FormModal = ({
       // 清空之前的状态
       setModalFormData({});
       setInitialValues({});
-
+      
       // 若配置了url和method，请求接口获取初始值
       if (formConfig.url && formConfig.method) {
         try {
@@ -206,6 +207,13 @@ const FormModal = ({
             placeholder={`请选择${item.name}`}
           />
         );
+      case "radio":
+        return (
+          <Radio.Group>
+            {Object.entries(item.options || {}).map(([key, option]) => <Radio value={key}>{option}</Radio>)}
+          </Radio.Group>
+        );
+
       default:
         return null;
     }
@@ -224,7 +232,7 @@ const FormModal = ({
               ? [{ required: true, message: `请输入/选择${item.name}` }]
               : []
           }
-          initialValue={initialValues[key]}
+        // initialValue={initialValues[key]}
         >
           {getInput(item)}
         </Form.Item>
