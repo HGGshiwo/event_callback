@@ -55,8 +55,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate services in the 'srv' folder
 add_service_files(
   FILES
-  ProcessRequest.srv
-  Register.srv
+  StringSrv.srv
 #   Service2.srv
 )
 

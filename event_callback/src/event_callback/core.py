@@ -69,7 +69,23 @@ R: Registery = Registery()
 T = TypeVar("T")
 
 
-class CallbackMixin:
+class CallbackMeta(type):
+    """自定义元类，控制实例化过程"""
+
+    def __call__(cls, *args, **kwargs):
+        if hasattr(cls, "_init_done"):
+            raise ValueError(f"{cls.__name__}只允许被实例化一次")
+        # 在一开始就调用父类的super.__init__去实例化所有大家组件，后面就可以使用ros
+        instance = super().__call__(*args, **kwargs)
+        cls._init_done = True
+        if hasattr(instance, "_register_callbacks"):
+            instance._register_callbacks() 
+        if hasattr(instance, "_post_init"):
+            instance._post_init() # 注册所有组件之后调用
+        return instance
+
+
+class CallbackMixin(metaclass=CallbackMeta):
     """
     1. 和Manager共享组件的实例，组件初始化优先级: manager config > mixin config > 没有明确配置参数
     2. 允许绑定回调函数，回调函数的self指向Mixin
@@ -99,6 +115,9 @@ class CallbackMixin:
         comp_name = get_classname(comp_cls, False)
         return self._component_instances.get(comp_name)
 
+    def _post_init(self):
+        """生命周期函数, 在注册完成之后被调用"""
+        pass
 
 class CallbackManager(CallbackMixin):
     """
@@ -112,6 +131,8 @@ class CallbackManager(CallbackMixin):
         mixins: Optional[List[CallbackMixin]] = None,
     ):
         """
+        初始化所有的组件，建议在子类__init__最开始时就调用
+        
         :param list component_config: 组件初始化配置 {组件名: {配置参数}, ...} 如 {"ros": {"node_name": "drone"}}
         :param CallbackMixin mixins: 允许注册组件，但是不实例化组件
         """
@@ -119,9 +140,9 @@ class CallbackManager(CallbackMixin):
         self.mixins = mixins if mixins is not None else []
         for mixin in self.mixins:
             mixin._update_component_config()
-        self._init_all_components()  # 初始化已注册的组件，并注册回调
+        self._init_components()  # 初始化已注册的组件
 
-    def _init_all_components(self) -> None:
+    def _init_components(self) -> None:
         """初始化在或者回调中被使用或者component_config中额外指定的组件实例"""
         # 检查是否有重复初始化的组件，只检查手动指定的，不检查自动注册的
         for mixin in self.mixins:
@@ -146,18 +167,24 @@ class CallbackManager(CallbackMixin):
             comp_kwargs = {} if comp_kwargs is None else comp_kwargs
             comp_instance = comp_cls(**comp_kwargs)
             self._component_instances[comp_name] = comp_instance
-            # 直接进行注册
+
+        # 所有的manager+mixin共享component
+        for mixin in self.mixins:
+            mixin._component_instances = self._component_instances
+    
+    def _register_callbacks(self):
+        for comp_name, comp_cfg in self.component_config.items():
+            (manager_cls, comp_cls, comp_kwargs) = comp_cfg
             classname = get_classname(manager_cls, False)
             callbacks = R._callback_map.get(classname, {}).get(comp_name, [])
             callbacks = [
                 (MethodType(callback[0], manager_cls), *callback[1:])
                 for callback in callbacks
             ]
+            comp_instance = self._component_instances.get(comp_name, None)
+            if comp_instance is None:
+                raise ValueError(f"{comp_name}还未被初始化，无法注册回调!")
             comp_instance.register_callbacks(callbacks)
-
-        # 所有的manager+mixin共享component
-        for mixin in self.mixins:
-            mixin._component_instances = self._component_instances
 
 
 class BaseComponent(ABC):

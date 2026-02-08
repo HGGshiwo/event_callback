@@ -1,6 +1,6 @@
 from dataclasses import dataclass, asdict, field
 from enum import Enum
-from typing import Dict, List, Any, Optional, TypeVar, Callable
+from typing import Dict, List, Any, Optional, TypeVar, Callable, Union
 
 from event_callback.core import R
 from event_callback.utils import get_classname
@@ -38,7 +38,6 @@ class FormItemType(Enum):
 
 
 class ToDictMixin:
-
     def to_dict(self) -> Dict[str, Any]:
         """
         转换为字典（过滤None值、函数，枚举转字符串，嵌套配置递归序列化）
@@ -166,7 +165,7 @@ class SelectFormItemConfig(BaseFormItemConfig):
     type: FormItemType = field(default=FormItemType.SELECT, init=False)
     options: Dict[str, str]
     multiple: bool = False
-    default: Optional[str | List[str]] = None
+    default: Optional[Union[str, List[str]]] = None
 
 
 @dataclass
@@ -175,7 +174,7 @@ class RadioFormItemConfig(BaseFormItemConfig):
 
     type: FormItemType = field(default=FormItemType.RADIO, init=False)
     options: Dict[str, str]
-    default: Optional[str | List[str]] = None
+    default: Optional[Union[str, List[str]]] = None
 
 
 @dataclass
@@ -205,6 +204,7 @@ class ToastConfig(ToDictMixin):
     url: Optional[str] = None  # 请求地址
     method: Optional[str] = None  # 请求方法
     format: Optional[Callable[[Any], str]] = None  # 格式化提示文本的函数
+    data: Optional[Dict[str, Any]] = field(default_factory=dict)  # 默认携带的参数
 
 
 @dataclass
@@ -244,7 +244,7 @@ class FormConfig(ToDictMixin):
     config_type: str = "form"
     url: Optional[str] = None  # 请求地址（获取表单初始数据）
     method: Optional[str] = None  # 请求方法
-    items: List[BaseFormItemConfig] = field(default_factory=list)  # 表单项列表
+    items: Dict[str, BaseFormItemConfig] = field(default_factory=dict)  # 表单项列表
     submit: Optional[InnerButtonConfig] = None  # 表单提交按钮配置
     on_change: Optional[InnerButtonConfig] = None  # 表单项变更触发的按钮配置
 
@@ -253,7 +253,7 @@ class FormConfig(ToDictMixin):
 class StatusConfig(BaseUIConfig):
     """状态栏配置"""
 
-    config_type: str = "state"
+    config_type: str = field(default="state", init=False)
     name: str = None  # 显示名称
     default: str = "未知"
 
