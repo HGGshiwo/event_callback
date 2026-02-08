@@ -14,9 +14,9 @@ export const copyToClip = async (config: CopyConfig, params: any) => {
   const text = JSON.stringify(res);
   const success = copy(text);
   if (success) {
-    message.success("复制成功！");
+    message.success(`${text}, 已复制到剪贴板!`);
   } else {
-    message.error("复制失败，请手动复制！");
+    message.error(`复制失败，错误: ${text}`);
   }
   return success;
 };

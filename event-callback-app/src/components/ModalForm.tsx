@@ -33,7 +33,7 @@ export interface FormConfig {
   title?: string; // 弹窗标题
   method?: string; // 初始值请求方法
   url?: string; // 初始值请求地址
-  items: FormItemConfig[]; // 表单项配置
+  items: Record<string, FormItemConfig> | object; // 表单项配置
   submit?: ButtonItemConfig; // 确认提交配置
   on_change?: ButtonItemConfig; // 实时提交配置
   initialModalVisible?: boolean; // 弹窗初始显示状态
@@ -62,9 +62,9 @@ const FormModal = ({
   // 辅助函数：从FormConfig.items中提取default值
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getDefaultValues = useCallback((): Record<string, any> => {
-    return formConfig.items.reduce(
-      (acc, item) => {
-        acc[item.id] = item.default ?? "";
+    return Object.entries(formConfig.items).reduce(
+      (acc, [key, item]) => {
+        acc[key] = item.default ?? "";
         return acc;
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

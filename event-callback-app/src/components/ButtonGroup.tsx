@@ -38,6 +38,9 @@ export const handleButtonClick = async (
       case "copy":
         await copyToClip(item.target as CopyConfig, params);
         break;
+      default:
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        message.error(`不支持按钮类型: ${(item.target as any)?.config_type}!`);
     }
   } catch (error) {
     message.error("操作失败，请重试");
