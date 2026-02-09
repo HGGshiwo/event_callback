@@ -43,7 +43,7 @@ export const handleButtonClick = async (
         message.error(`不支持按钮类型: ${(item.target as any)?.config_type}!`);
     }
   } catch (error) {
-    message.error("操作失败，请重试");
+    // message.error("操作失败，请重试");
     console.error(`按钮${item.name}操作失败：`, error);
   }
 };

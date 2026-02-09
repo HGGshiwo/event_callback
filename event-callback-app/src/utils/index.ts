@@ -31,17 +31,17 @@ request.interceptors.request.use(
 // 响应拦截器
 request.interceptors.response.use(
   (response) => {
-    // 假设后端返回格式：{ code: 200, data: any, msg: string }
+    // 假设后端返回格式：{  status: any, msg: string }
     const { status, msg } = response.data;
     if (status === "success") {
       return msg;
     } else {
-      message.error("请求失败：" + msg);
+      // message.error("请求失败：" + msg);
       return Promise.reject(new Error(msg));
     }
   },
   (error) => {
-    message.error("网络错误：" + error.message);
+    message.error("请求失败：" + error.message);
     return Promise.reject(error);
   },
 );
@@ -67,3 +67,5 @@ export const sortByOrder = <T extends { order?: number }>(
 ): [string, T][] => {
   return list.sort((a, b) => (a[1].order ?? 999) - (b[1].order ?? 999));
 };
+
+

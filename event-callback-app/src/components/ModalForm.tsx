@@ -8,6 +8,7 @@ import {
   Switch,
   Select,
   Radio,
+  message,
 } from "antd";
 import { createRoot } from "react-dom/client";
 import { httpRequest } from "../utils";
@@ -26,6 +27,7 @@ export interface FormItemConfig {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: Record<string, any> | object; // 下拉框选项
   required?: boolean; // 是否必填（扩展字段）
+  transform?: "json" | "JSON"; //需要转换的格式
 }
 
 export interface FormConfig {
@@ -33,11 +35,66 @@ export interface FormConfig {
   title?: string; // 弹窗标题
   method?: string; // 初始值请求方法
   url?: string; // 初始值请求地址
-  items: Record<string, FormItemConfig> | object; // 表单项配置
+  items: Record<string, FormItemConfig>; // 表单项配置
   submit?: ButtonItemConfig; // 确认提交配置
   on_change?: ButtonItemConfig; // 实时提交配置
   initialModalVisible?: boolean; // 弹窗初始显示状态
 }
+
+export const getInput = (item: FormItemConfig, res: Record<string, any>) => {
+  switch (item.type) {
+    case "input":
+      return <Input placeholder={`请输入${res?.name || item.name}`} />;
+    case "number":
+      return (
+        <InputNumber
+          max={res?.max || item.max}
+          min={res?.min || item.min}
+          step={res?.step || item.step}
+          placeholder={`请输入${res?.name || item.name}`}
+          style={{ width: "100%" }}
+          mode="spinner"
+        />
+      );
+    case "slider":
+      return (
+        <Slider
+          max={res?.max || item.max}
+          min={res?.min || item.min}
+          step={res?.step || item.step}
+        />
+      );
+    case "switch":
+      return <Switch />;
+    case "select":
+      return (
+        <Select
+          options={
+            Object.entries(res?.options || item.options || {}).map(
+              ([key, option]) => ({
+                value: key,
+                label: option,
+              }),
+            ) || []
+          }
+          placeholder={`请选择${res?.name || item.name}`}
+        />
+      );
+    case "radio":
+      return (
+        <Radio.Group>
+          {Object.entries(res?.options || item.options || {}).map(
+            ([key, option]) => (
+              <Radio value={key}>{option as any}</Radio>
+            ),
+          )}
+        </Radio.Group>
+      );
+
+    default:
+      return null;
+  }
+};
 
 // 核心：表单弹窗组件（所有Hooks都放在这里面）
 // eslint-disable-next-line react-refresh/only-export-components
@@ -54,10 +111,14 @@ const FormModal = ({
   const [modalVisible, setModalVisible] = useState<boolean>(
     formConfig.initialModalVisible ?? true, // 调用时默认显示
   );
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
   const [modalFormData, setModalFormData] = useState<Record<string, any>>({});
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [initialValues, setInitialValues] = useState<Record<string, any>>({});
+  const [extraConfig, setExtraConfig] = useState<Record<string, any>>({}); // 支持接口直接返回默认值，或者是value+其他表单的props
+  const [loading, setLoading] = useState<boolean>(true);
 
   // 辅助函数：从FormConfig.items中提取default值
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -74,46 +135,38 @@ const FormModal = ({
 
   // 2. 处理初始值逻辑：接口获取 或 解析item.default
   useEffect(() => {
-    const fetchInitialValues = async () => {
+    (async () => {
       // 清空之前的状态
       setModalFormData({});
       setInitialValues({});
-      
+      let validData = getDefaultValues() || {};
+      const config: Record<string, any> = {}; // 记录接口可能传入的配置
+
       // 若配置了url和method，请求接口获取初始值
       if (formConfig.url && formConfig.method) {
         try {
-          const res = await httpRequest(formConfig.method, formConfig.url);
-          const validData = res || {};
-          setInitialValues(validData);
-          setModalFormData(validData);
-          form.setFieldsValue(validData);
+          const res: any = await httpRequest(formConfig.method, formConfig.url);
+          Object.entries(res).map(([key, item]) => {
+            let value = item;
+            if (typeof item == "object") {
+              const { value: tmpValue, ...newItem } = item as any;
+              config[key] = newItem;
+              value = tmpValue;
+            }
+            validData[key] = value;
+          });
         } catch (error) {
           console.error("获取表单初始值失败：", error);
-          // 接口失败时降级使用default值
-          const defaultVals = getDefaultValues();
-          setInitialValues(defaultVals);
-          setModalFormData(defaultVals);
         }
-      } else {
-        // 无接口时，直接解析item的default值
-        const defaultVals = getDefaultValues();
-        setInitialValues(defaultVals);
-        setModalFormData(defaultVals);
       }
-    };
-
-    // 仅在弹窗显示且配置变化时触发
-    if (modalVisible) {
-      fetchInitialValues();
-    }
-  }, [
-    formConfig.url,
-    formConfig.method,
-    formConfig.items,
-    modalVisible,
-    form,
-    getDefaultValues,
-  ]);
+      // 无接口时，直接解析item的default值
+      setExtraConfig(config);
+      setInitialValues(validData);
+      setModalFormData(validData);
+      // form.setFieldsValue(validData);
+      setLoading(false);
+    })();
+  }, []);
 
   // 组件卸载时清理
   useEffect(() => {
@@ -121,8 +174,6 @@ const FormModal = ({
       form.resetFields();
     };
   }, [form]);
-
-  // 3. 表单值变化处理：更新内部状态 + 实时提交（若配置on_change）
 
   // 4. 通用提交函数（调用handleButtonClick）
   const submitForm = useCallback(
@@ -136,7 +187,7 @@ const FormModal = ({
     },
     [],
   );
-
+  // 3. 表单值变化处理：更新内部状态 + 实时提交（若配置on_change）
   const onFormChange = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (changedValues: Record<string, any>, allValues: Record<string, any>) => {
@@ -159,6 +210,19 @@ const FormModal = ({
 
       // 若配置了submit，提交表单参数
       if (formConfig.submit) {
+        Object.entries(validValues).forEach(([key, item]) => {
+          switch (formConfig.items[key].transform) {
+            case "json":
+            case "JSON":
+              try {
+                validValues[key] = JSON.parse(item);
+              } catch (e) {
+                message.error(`${key}转为json时出错: ${e}`);
+                return;
+              }
+              break;
+          }
+        });
         await submitForm(validValues, formConfig.submit);
       }
 
@@ -176,69 +240,19 @@ const FormModal = ({
     onDestroy();
   }, [onDestroy]);
 
-  // 7. 渲染表单控件（根据type匹配对应组件）
-  const getInput = useCallback((item: FormItemConfig) => {
-    switch (item.type) {
-      case "input":
-        return <Input placeholder={`请输入${item.name}`} />;
-      case "number":
-        return (
-          <InputNumber
-            max={item.max}
-            min={item.min}
-            step={item.step}
-            placeholder={`请输入${item.name}`}
-            style={{ width: "100%" }}
-          />
-        );
-      case "slider":
-        return <Slider max={item.max} min={item.min} step={item.step} />;
-      case "switch":
-        return <Switch />;
-      case "select":
-        return (
-          <Select
-            options={
-              Object.entries(item.options || {}).map(([key, option]) => ({
-                value: key,
-                label: option,
-              })) || []
-            }
-            placeholder={`请选择${item.name}`}
-          />
-        );
-      case "radio":
-        return (
-          <Radio.Group>
-            {Object.entries(item.options || {}).map(([key, option]) => <Radio value={key}>{option}</Radio>)}
-          </Radio.Group>
-        );
-
-      default:
-        return null;
-    }
-  }, []);
-
   // 8. 渲染单个表单项
   const renderFormItem = useCallback(
     (key: string, item: FormItemConfig) => {
+      const rules = item.required
+        ? [{ required: true, message: `请输入/选择${item.name}` }]
+        : undefined;
       return (
-        <Form.Item
-          key={key}
-          label={item.name}
-          name={key}
-          rules={
-            item.required !== false
-              ? [{ required: true, message: `请输入/选择${item.name}` }]
-              : []
-          }
-        // initialValue={initialValues[key]}
-        >
-          {getInput(item)}
+        <Form.Item key={key} label={item.name} name={key} rules={rules}>
+          {getInput(item, extraConfig?.[key])}
         </Form.Item>
       );
     },
-    [getInput, initialValues],
+    [initialValues],
   );
 
   // 弹窗标题默认值
@@ -247,6 +261,7 @@ const FormModal = ({
   // 渲染最终组件
   return (
     <Modal
+      loading={loading}
       title={modalTitle}
       open={modalVisible}
       onCancel={onCancel}
