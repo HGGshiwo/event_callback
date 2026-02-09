@@ -2,7 +2,6 @@ import copy
 import datetime
 from typing import Any, Dict
 
-from httpx import delete
 
 from event_callback.utils import BaseEnum
 

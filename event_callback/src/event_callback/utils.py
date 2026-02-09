@@ -1,3 +1,4 @@
+from contextlib import AsyncExitStack
 import inspect
 import json
 import time
@@ -203,7 +204,7 @@ def throttle(
     创建一个节流装饰器，限制函数的调用频率和最大调用次数
 
     Args:
-        frequency: 最小调用间隔（秒），例如 1.0 表示每秒最多调用 1 次
+        frequency: 调用频率，例如 2.0 表示每秒最多调用 2 次
         max_calls: 最大调用次数，默认无限制
 
     Returns:
@@ -226,7 +227,7 @@ def throttle(
             current_time = time.time()
 
             # 检查时间间隔是否满足节流要求
-            if current_time - last_called >= frequency:
+            if current_time - last_called >= 1 / frequency:
                 try:
                     # 执行目标函数并记录结果
                     result = func(*args, **kwargs)
@@ -372,6 +373,8 @@ async def dict2request(request_data: Dict[str, Any]) -> Request:
         "query_string": query_string,  # 查询参数（必需）
         "headers": headers.raw,  # Headers（必需，影响 Content-Type 解析）
         # 非必需字段用空值/默认值填充（避免 solve_dependencies 报错）
+        "fastapi_function_astack": AsyncExitStack(),
+        "fastapi_innner_astack": AsyncExitStack(),
         "app": object(),  # 用空对象替代真实 app 实例
         "raw_path": b"",
         "scheme": "http",

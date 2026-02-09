@@ -145,7 +145,7 @@ class InputFormItemConfig(BaseFormItemConfig):
     placeholder: Optional[str] = None
     maxlength: Optional[int] = None
     default: Optional[str] = None
-
+    transform: Optional[str] = None
 
 @dataclass
 class NumberFormItemConfig(BaseFormItemConfig):
