@@ -190,21 +190,22 @@ class CheckboxFormItemConfig(BaseFormItemConfig):
 
 
 @dataclass
-class GroupTableColumnConfig(ToDictMixin):
+class TableColumnConfig(ToDictMixin):
     title: str  # 对应数据的title
     editable: Optional[bool] = False
     width: Optional[int] = None
 
 
 @dataclass
-class GroupTableConfig(BaseUIConfig):
-    columns: Dict[str, GroupTableColumnConfig] = field(default_factory=dict)
+class TableConfig(BaseUIConfig):
+    config_type: str = "table" 
+    columns: Dict[str, TableColumnConfig] = field(default_factory=dict)
 
 
 @dataclass
 class GroupTableFormItemConfig(ToDictMixin):
     type: FormItemType = field(default=FormItemType.GROUP_TABLE, init=False)
-    columns: Dict[str, GroupTableColumnConfig] = field(default_factory=dict)
+    columns: Dict[str, TableColumnConfig] = field(default_factory=dict)
     titleKey: str = "title"  # tree用于显示+检索的字段
 
 

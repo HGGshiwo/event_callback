@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional, Union
 
-from attr import dataclass
 from event_callback.components.http import MessageHandler, MessageType
 from event_callback.components.http.ui_config import BaseUIConfig
 import uvicorn
@@ -16,8 +15,8 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from std_msgs.msg import String
-from event_callback.utils import dict2route, request2dict, route2dict
-
+from event_callback.utils import dict2route, request2dict
+from starlette.middleware.gzip import GZipMiddleware
 
 try:
     import rospy
@@ -146,8 +145,11 @@ class HTTPComponent(BaseComponent):
         self.enable_register = self.config.get("register", False)
         self.fastapi_host = self.config.get("host", "0.0.0.0")
         self.fastapi_port = self.config.get("port", 8000)
+
         default_static_dir = Path(__file__).parent.parent / "static"
         self.static_dir = Path(self.config.get("static_dir", default_static_dir))
+        default_home_dir = Path(__file__).parents[5] / "event-callback-app" / "dist"
+        self.home_dir = Path(self.config.get("home_dir", default_home_dir))
 
         self.websockt_topic = self.config.get("websocket_topic", "ws")
         self.log_exclude_path = self.config.get("log_exclude_path", [])
@@ -197,13 +199,29 @@ class HTTPComponent(BaseComponent):
         self.app.add_middleware(
             self.FilterLogMiddleware, paths_to_exclude=self.log_exclude_path
         )
+        self.app.add_middleware(
+            GZipMiddleware,
+            minimum_size=1024,  # 仅压缩大于 1KB 的响应（避免小文件压缩得不偿失）
+            compresslevel=6     # 压缩级别 1-9，6 是压缩率和性能的平衡值
+        )
 
     def _init_fastapi_static(self) -> None:
         """挂载静态文件目录（确保目录存在，避免报错）"""
+        print(f"home dir: {self.home_dir.absolute()}")
+        if self.home_dir.exists():
+            self.app.mount(
+                "/home",  # 访问路径根目录
+                StaticFiles(
+                    directory=self.home_dir.absolute(), html=True
+                ),  # html=True 启用自动加载index.html
+                name="home",  # 给这个挂载点命名，便于区分
+            )
+
         if self.static_dir.exists():
             self.app.mount(
                 "/static", StaticFiles(directory=self.static_dir), name="static"
             )
+            print(f"FastAPI静态文件目录: {self.static_dir.absolute()}")
         else:
             print(f"FastAPI静态文件目录不存在: {self.static_dir}，跳过挂载")
 
@@ -215,7 +233,7 @@ class HTTPComponent(BaseComponent):
         @app.get("/")
         async def index():
             """首页路由：返回静态index.html"""
-            index_path = self.static_dir / "index.html"
+            index_path = self.home_dir / "index.html"
             return (
                 FileResponse(index_path)
                 if index_path.exists()
@@ -373,6 +391,6 @@ class http(BaseComponentHelper):
             "host": host,
             "port": port,
             "register": register,
-            "static_idr": static_dir,
+            "static_dir": static_dir,
         }
         return cls.target, kwargs
