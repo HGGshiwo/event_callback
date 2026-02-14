@@ -19,6 +19,7 @@ from starlette.datastructures import Headers, QueryParams
 from fastapi import Request
 from fastapi.params import Body, Query, Path
 import urllib
+from rosgraph.masterapi import Master
 
 
 def get_class_qualname(obj: Any, is_method: bool) -> str:
@@ -270,8 +271,49 @@ class rostopic_field:
         self._timeout = timeout
         self._msg = None
         self._format = format
+        self._check_topic_type(topic_name, topic_type)
         # 保存订阅者引用，避免被GC回收导致订阅失效
         self._subscriber = rospy.Subscriber(topic_name, topic_type, self._msg_callback)
+
+    def _get_topic_type(self, topic_name: str):
+        """
+        查询指定话题的类型
+        :param topic_name: 话题名称（如 "/chatter"）
+        :return: 话题类型字符串（如 "std_msgs/String"），若话题不存在返回None
+        """
+        try:
+            master = Master(rospy.get_name())
+            # 获取话题的所有连接信息
+            topic_info = master.getTopicTypes()
+            # 遍历查找目标话题
+            for name, type_str in topic_info:
+                if name == topic_name:
+                    return type_str
+            return None
+        except Exception as e:
+            rospy.logerr(f"查询话题类型失败: {e}")
+            return None
+
+    def _check_topic_type(self, topic_name: str, expected_type: Any):
+        """
+        带类型检查的订阅函数
+        :param topic_name: 要订阅的话题名
+        :param expected_type: 期望的消息类型类（如 String）
+        """
+        # 步骤1：获取期望类型的字符串表示（如 std_msgs/String）
+        expected_type_str = expected_type._type
+
+        # 步骤2：查询话题真实类型
+        real_type_str = self._get_topic_type(topic_name)
+
+        # 步骤3：类型检查与警告
+        if real_type_str is None:
+            # rospy.logwarn(f"警告：话题 {topic_name} 未找到，可能尚未发布！")
+            return
+        elif real_type_str != expected_type_str:
+            raise ValueError(
+                f"topic_name type dismatch! expected: {expected_type_str}, got: {real_type_str}"
+            )
 
     def _msg_callback(self, msg: Any):
         """话题回调函数，更新最新消息"""
