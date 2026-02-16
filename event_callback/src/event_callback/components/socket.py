@@ -28,7 +28,7 @@ except:
         pass
 
 
-from event_callback.utils import get_classname, rospy_is_shutdown
+from event_callback.utils import get_classname, rospy_init_node, rospy_is_shutdown
 
 # 组件基类与类型导入
 from event_callback.core import (
@@ -46,6 +46,7 @@ AddrType = Union[Tuple[str, int], None]
 DataHandleFunc = Callable[[bytes, AddrType], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
+
 
 class BaseSocketManager:
     """公共Socket连接管理基类：抽离服务端/客户端通用的连接、数据处理逻辑"""
@@ -85,10 +86,14 @@ class BaseSocketManager:
     async def route_callback(self, data_str: Union[str, bytes], addr: AddrType = None):
         """通用回调路由核心：提取ID→映射URL→执行回调（服务端/客户端/TCP/UDP完全复用）"""
         if not self.component.id_extractor:
-            logger.error(f"{get_classname(self, False)} callback failed: no id_exctractor found")
+            logger.error(
+                f"{get_classname(self, False)} callback failed: no id_exctractor found"
+            )
             return
         if not self.component.callback_map:
-            logger.error(f"{get_classname(self, False)}callback failed: no callback found")
+            logger.error(
+                f"{get_classname(self, False)}callback failed: no callback found"
+            )
             return
         # 提取业务ID并映射回调URL
         try:
@@ -116,9 +121,7 @@ class SocketServerManager(BaseSocketManager):
 
     def __init__(self, component):
         super().__init__(component)
-        self.connections: List[Tuple[socket.socket, AddrType]] = (
-            []
-        )  # TCP客户端连接列表（UDP忽略）
+        self.connections: List[Tuple[socket.socket, AddrType]] = []  # TCP客户端连接列表（UDP忽略）
 
     def add_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：添加客户端连接（线程安全，仅TCP生效）"""
@@ -126,7 +129,9 @@ class SocketServerManager(BaseSocketManager):
             return
         with self.lock:
             self.connections.append((conn, addr))
-        logger.info(f"TCP server: New client {addr}, current connections: {len(self.connections)}")
+        logger.info(
+            f"TCP server: New client {addr}, current connections: {len(self.connections)}"
+        )
 
     def remove_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：移除客户端连接（线程安全，自动关闭socket，仅TCP生效）"""
@@ -139,7 +144,9 @@ class SocketServerManager(BaseSocketManager):
             conn.close()
         except Exception:
             pass
-        logger.info(f"TCP Server: client disconnected {addr}, current connections: {len(self.connections)}")
+        logger.info(
+            f"TCP Server: client disconnected {addr}, current connections: {len(self.connections)}"
+        )
 
 
 class SocketClientManager(BaseSocketManager):
@@ -211,7 +218,9 @@ class SocketClientManager(BaseSocketManager):
                 )
                 break
             # 尝试重连（传socket_type修复原代码缺参bug）
-            logger.info(f"Socket Client: Attempting to reconnect to server for the {reconnect_count+1}th time...")
+            logger.info(
+                f"Socket Client: Attempting to reconnect to server for the {reconnect_count+1}th time..."
+            )
             if await self.connect(
                 self.component.socket_host,
                 self.component.socket_port,
@@ -285,13 +294,12 @@ class BaseSocketComponent(BaseComponent):
     def _init_ros_node(self):
         """初始化ROS节点（服务端/客户端节点名区分，避免冲突）"""
         node_suffix = "server" if self.is_server else "client"
-        node_name = self.config.get(
-            "node_name",
-            f"{self.__class__.__name__.lower()}_{self.ros_topic_prefix}_{node_suffix}",
+        node_name = self.__class__.__name__.lower() + node_suffix
+        rospy_init_node(node_name)
+
+        logger.info(
+            f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}"
         )
-        if not rospy.core.is_initialized():
-            rospy.init_node(node_name, anonymous=False)
-            logger.info(f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}")
 
     def _init_ros_pub_sub(self):
         """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
@@ -331,7 +339,9 @@ class BaseSocketComponent(BaseComponent):
     def do_register_trigger(self):
         """通用注册触发方法：向ROS发布Empty消息，触发其他节点注册"""
         if not self.enable_register:
-            logger.warning("Socket component has disabled ROS registration, cannot trigger do_register")
+            logger.warning(
+                "Socket component has disabled ROS registration, cannot trigger do_register"
+            )
             return
         self.do_register_pub.publish(Empty())
         logger.info(
@@ -366,7 +376,9 @@ class BaseSocketComponent(BaseComponent):
             target=asyncio.run, args=(coro,), daemon=True
         )
         self.socket_thread.start()
-        logger.info(f"Socket{'Server' if self.is_server else 'Client'} async thread started")
+        logger.info(
+            f"Socket{'Server' if self.is_server else 'Client'} async thread started"
+        )
 
 
 class SocketServerComponent(BaseSocketComponent):
@@ -438,7 +450,9 @@ class SocketServerComponent(BaseSocketComponent):
     async def _run_tcp_server(self):
         """TCP服务端专属：异步主逻辑，监听+接受连接+多客户端处理"""
         self.server_sock.listen(8)  # 开启TCP监听
-        logger.info(f"TCP server started listening on: {self.socket_host}:{self.socket_port}")
+        logger.info(
+            f"TCP server started listening on: {self.socket_host}:{self.socket_port}"
+        )
         while not rospy_is_shutdown():
             try:
                 # 接受TCP客户端连接，返回新的通信套接字
@@ -462,9 +476,7 @@ class SocketServerComponent(BaseSocketComponent):
         """服务端统一入口：按socket_type分支执行TCP/UDP逻辑"""
         # 初始化通用服务端套接字（TCP/UDP共用）
         self.server_sock = socket.socket(socket.AF_INET, self.socket_type)
-        self.server_sock.setsockopt(
-            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
-        )  # 端口复用
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # 端口复用
         self.server_sock.bind((self.socket_host, self.socket_port))
         self.server_sock.setblocking(False)
         self.loop = asyncio.get_event_loop()
@@ -473,7 +485,9 @@ class SocketServerComponent(BaseSocketComponent):
         if self.socket_type == socket.SOCK_STREAM:
             await self._run_tcp_server()
         else:
-            logger.info(f"UDP server started listening on: {self.socket_host}:{self.socket_port}")
+            logger.info(
+                f"UDP server started listening on: {self.socket_host}:{self.socket_port}"
+            )
             await self._run_udp_server()
 
         # 服务端关闭，释放套接字
@@ -581,19 +595,22 @@ class SocketClientComponent(BaseSocketComponent):
         # 日志打印（忽略非UTF8数据解码错误）
         logger.info(f"Socket Client sent data to server: 0x{data_bytes.hex()}")
 
+
 @dataclass
 class SocketConfig(BaseConfig):
-    host: str # 监听/连接的IP
-    port: int # 监听/连接的端口
-    socket_type: str # udp or tcp
-    router: Optional[Callable] = None # 数据包 -> callback_url
-    decode: Optional[bool] = False # 是否需要解码为字符串
-    buffer_size: Optional[int] = 256 # 接收缓冲区大小
-    register: Optional[bool] = False # 是否提供ros注册接口
+    host: str  # 监听/连接的IP
+    port: int  # 监听/连接的端口
+    socket_type: str  # udp or tcp
+    router: Optional[Callable] = None  # 数据包 -> callback_url
+    decode: Optional[bool] = False  # 是否需要解码为字符串
+    buffer_size: Optional[int] = 256  # 接收缓冲区大小
+    register: Optional[bool] = False  # 是否提供ros注册接口
+
 
 @dataclass
 class SocketClientConfig(SocketConfig):
     target: type = field(default=SocketClientComponent, init=False)
+
 
 @dataclass
 class SocketClientConfig(SocketConfig):
@@ -606,6 +623,7 @@ class sockets(BaseComponentHelper):
     @classmethod
     def recv(cls, url: str, frequency: Optional[int] = None):
         return R._create_comp_decorator(SocketServerComponent, url, frequency=frequency)
+
 
 class socketc(BaseComponentHelper):
     target: Type["SocketClientComponent"] = SocketClientComponent

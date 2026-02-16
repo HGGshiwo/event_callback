@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from event_callback.utils import (
     dict2request,
+    rospy_init_node,
     rospy_is_shutdown,
     route2dict,
 )
@@ -63,8 +64,7 @@ class HTTP_ProxyComponent(BaseComponent):
     def _init_ros_node(self) -> None:
         """初始化ROS节点，优先使用配置中的节点名，无配置则使用Manager类名小写"""
         node_name = self.__class__.__name__.lower()
-        if not rospy.core.is_initialized():
-            rospy.init_node(node_name, anonymous=True)
+        rospy_init_node(node_name)
 
     def _init_ros_srv_config(self) -> None:
         """初始化ROS服务配置：等待注册服务、创建服务代理"""

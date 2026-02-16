@@ -712,12 +712,13 @@ def setup_logger(
 
         def format(self, record):
             # 1. 给级别名称添加颜色
+            record_copy = logging.makeLogRecord(record.__dict__)
             level_name = record.levelname
             color = self.COLOR_MAP.get(record.levelno, Fore.RESET)
-            record.levelname = f"{color}{level_name}{Style.RESET_ALL}"
+            record_copy.levelname = f"{color}{level_name}{Style.RESET_ALL}"
             
             # 2. 保留原始格式（包含文件名、行号、日期等）
-            return super().format(record)
+            return super().format(record_copy)
     
     # 1. 定义日志格式（包含文件名、行号、日期、级别、日志器名称、消息）
     LOG_FORMAT = (
@@ -761,8 +762,9 @@ def setup_logger(
             encoding="utf-8",  # 避免中文乱码
             mode="a",  # 追加模式
         )
+        file_formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
         file_handler.setLevel(root_level)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
         root_logger.addHandler(file_handler)
 
     # 禁用日志向上传播（防止重复输出）
