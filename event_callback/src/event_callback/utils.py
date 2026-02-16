@@ -1,6 +1,11 @@
 from contextlib import AsyncExitStack
+import copy
 import inspect
 import json
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+import sys
 import time
 from typing import (
     Any,
@@ -96,6 +101,20 @@ except:
 
 def rospy_is_shutdown():
     return rospy is not None and rospy.is_shutdown()
+
+
+def rospy_init_node(node_name: str, anonymous: bool = False):
+    """初始化ros node, 避免ros设置logger"""
+    if rospy.core.is_initialized():
+        return
+    _logger = logging.getLogger()
+    _handler = [h for h in _logger.handlers]
+    _level = _logger.level
+    rospy.init_node(node_name, anonymous=anonymous)
+    logger = logging.getLogger()
+    logger.setLevel(_level)
+    for handler in _handler:
+        logger.addHandler(handler)
 
 
 class EnumMeta(type):
@@ -661,3 +680,145 @@ def dict2route(route_params: Dict[str, Any]) -> Dict[str, Any]:
         # 无需手动构造 Depends，FastAPI 会根据 endpoint 的注解自动解析
     }
     return add_route_params
+
+
+def setup_logger(
+    log_dir: Optional[str] = None,
+    log_level: str = "INFO",
+    max_file_size_mb: int = 10,
+    backup_count: int = 5,
+) -> None:
+    """
+    初始化全局日志配置工具函数
+
+    :param log_dir: 日志文件存储目录，传None则仅终端输出，传路径则添加文件Handler
+    :param log_level: 全局日志级别，可选：DEBUG/INFO/WARNING/ERROR/CRITICAL
+    :param max_file_size_mb: 单个日志文件最大大小（MB），仅log_dir有效时生效
+    :param backup_count: 日志文件备份数量，仅log_dir有效时生效
+    """
+    from colorama import init, Fore, Style
+    init(autoreset=True)  # 自动重置颜色，避免后续文字变色
+    
+    class ColoredFormatter(logging.Formatter):
+        """自定义带颜色的日志格式器"""
+        # 级别 -> 颜色映射
+        COLOR_MAP = {
+            logging.DEBUG: Fore.BLUE,
+            logging.INFO: Fore.GREEN,
+            logging.WARNING: Fore.YELLOW,
+            logging.ERROR: Fore.RED,
+            logging.CRITICAL: Fore.MAGENTA
+        }
+
+        def format(self, record):
+            # 1. 给级别名称添加颜色
+            level_name = record.levelname
+            color = self.COLOR_MAP.get(record.levelno, Fore.RESET)
+            record.levelname = f"{color}{level_name}{Style.RESET_ALL}"
+            
+            # 2. 保留原始格式（包含文件名、行号、日期等）
+            return super().format(record)
+    
+    # 1. 定义日志格式（包含文件名、行号、日期、级别、日志器名称、消息）
+    LOG_FORMAT = (
+        "%(asctime)s [%(levelname)s] %(message)s"
+    )
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    formatter = ColoredFormatter(LOG_FORMAT, datefmt=DATE_FORMAT)
+
+    # 2. 获取并重置根日志器（避免重复配置）
+    root_logger = logging.getLogger()
+    # 清空现有Handler，防止重复输出
+    root_logger.handlers.clear()
+    # 转换日志级别字符串为logging常量
+    level_mapping: Dict[str, int] = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    root_level = level_mapping.get(log_level.upper(), logging.INFO)
+    root_logger.setLevel(root_level)
+
+    # 3. 添加控制台Handler（始终启用）
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(root_level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # 4. 若传入log_dir，添加文件Handler
+    print(f"log_dir: {log_dir}")
+    if log_dir is not None:
+        # 确保日志目录存在
+        os.makedirs(log_dir, exist_ok=True)
+        log_file_path = os.path.join(log_dir, "app.log")
+        # 按大小分割日志文件
+        file_handler = RotatingFileHandler(
+            filename=log_file_path,
+            maxBytes=max_file_size_mb * 1024 * 1024,  # 转换为字节
+            backupCount=backup_count,
+            encoding="utf-8",  # 避免中文乱码
+            mode="a",  # 追加模式
+        )
+        file_handler.setLevel(root_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    # 禁用日志向上传播（防止重复输出）
+    # root_logger.propagate = False
+
+
+def get_all_loggers():
+    """
+    获取所有已创建的 logger（包括 root 和子 logger）
+    返回：字典，key=logger名称，value=logger对象
+    """
+    # 1. 获取 logging 管理器（存储所有 logger 的核心）
+    logger_manager = logging.Logger.manager
+
+    # 2. 获取所有子 logger（loggerDict 是 {名称: logger对象} 的字典）
+    child_loggers = logger_manager.loggerDict
+
+    # 3. 加入 root logger（名称固定为 ""）
+    all_loggers = {"": logger_manager.root}
+
+    # 4. 合并子 logger（过滤掉非 Logger 类型的占位符，避免异常）
+    for name, logger in child_loggers.items():
+        if isinstance(logger, logging.Logger):
+            all_loggers[name] = logger
+
+    return all_loggers
+
+
+def print_logger_info(logger_name: str = None):
+    """
+    打印指定/所有 logger 的详细信息
+    :param logger_name: 指定 logger 名称（None 则打印所有）
+    """
+    all_loggers = get_all_loggers()
+
+    # 筛选要打印的 logger
+    target_loggers = (
+        all_loggers if logger_name is None else {logger_name: all_loggers[logger_name]}
+    )
+
+    print("=" * 80)
+    for name, logger in target_loggers.items():
+        # 基础信息
+        logger_name_display = "root logger" if name == "" else f"子 logger [{name}]"
+        print(f"\n{logger_name_display} 详细信息：")
+        print(f"  - 自身级别：{logging.getLevelName(logger.level)} ({logger.level})")
+        print(f"  - 有效级别：{logging.getLevelName(logger.getEffectiveLevel())}")
+        print(f"  - propagate：{logger.propagate}")
+        print(f"  - Handler 数量：{len(logger.handlers)}")
+        print(f"  - 父 logger：{logger.parent.name if logger.parent else '无'}")
+
+        # 列出 Handler（如果有）
+        if logger.handlers:
+            print("  - 已配置 Handler：")
+            for idx, handler in enumerate(logger.handlers):
+                print(
+                    f"    [{idx}] {type(handler).__name__} (级别：{logging.getLevelName(handler.level)})"
+                )
+    print("\n" + "=" * 80)

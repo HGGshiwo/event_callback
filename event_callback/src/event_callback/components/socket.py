@@ -1,8 +1,10 @@
+from dataclasses import dataclass, field
 import errno
 import socket
 import asyncio
 import threading
 from functools import partial
+import logging
 from typing import (
     Any,
     Awaitable,
@@ -33,6 +35,7 @@ from event_callback.core import (
     R,
     BaseComponent,
     BaseComponentHelper,
+    BaseConfig,
     CallbackItem,
     CallbackManager,
 )
@@ -42,6 +45,7 @@ ConnType = Union[socket.socket, None]
 AddrType = Union[Tuple[str, int], None]
 DataHandleFunc = Callable[[bytes, AddrType], Awaitable[None]]
 
+logger = logging.getLogger(__name__)
 
 class BaseSocketManager:
     """公共Socket连接管理基类：抽离服务端/客户端通用的连接、数据处理逻辑"""
@@ -65,7 +69,7 @@ class BaseSocketManager:
                 # TCP：3.6+原生支持sock_sendall，无需兼容
                 await loop.sock_sendall(conn, data)
         except Exception as e:
-            print(f"Socket发送数据异常: {str(e)}")
+            logger.exception(f"Socket send error: {str(e)}")
 
     async def decode_data(self, data: bytes, decode: bool = False):
         """通用数据解码：统一异常处理，返回解码后的字符串/原字节"""
@@ -75,25 +79,25 @@ class BaseSocketManager:
             data_str = data.decode("utf8").strip()
             return data_str if data_str else None
         except Exception as e:
-            print(f"Socket数据解码失败: {str(e)}")
+            logger.exception(f"Socket decode error: {str(e)}")
             return None
 
     async def route_callback(self, data_str: Union[str, bytes], addr: AddrType = None):
         """通用回调路由核心：提取ID→映射URL→执行回调（服务端/客户端/TCP/UDP完全复用）"""
         if not self.component.id_extractor:
-            print(f"{get_classname(self, False)}回调路由失败：未初始化ID提取函数")
+            logger.error(f"{get_classname(self, False)} callback failed: no id_exctractor found")
             return
         if not self.component.callback_map:
-            print(f"{get_classname(self, False)}回调路由失败：未初始化回调函数")
+            logger.error(f"{get_classname(self, False)}callback failed: no callback found")
             return
         # 提取业务ID并映射回调URL
         try:
             callback_url = self.component.id_extractor(data_str)
             if callback_url not in self.component.callback_map:
-                print(f"无匹配的回调函数，ID: {callback_url}")
+                logger.error(f"No callback match ID: {callback_url}!")
                 return
         except Exception as e:
-            print(f"Socket提取ID失败: {str(e)}")
+            logger.error(f"Socket extract id failed: {str(e)}")
             return
 
         # 执行回调（兼容同步/异步，入参统一）
@@ -104,10 +108,7 @@ class BaseSocketManager:
             else:
                 callback(data_str)
         except Exception as e:
-            print(f"Socket执行回调失败: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception(f"Socket excute callback failed: {str(e)}")
 
 
 class SocketServerManager(BaseSocketManager):
@@ -125,7 +126,7 @@ class SocketServerManager(BaseSocketManager):
             return
         with self.lock:
             self.connections.append((conn, addr))
-        print(f"TCP服务端：新客户端连接 {addr}，当前连接数: {len(self.connections)}")
+        logger.info(f"TCP server: New client {addr}, current connections: {len(self.connections)}")
 
     def remove_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：移除客户端连接（线程安全，自动关闭socket，仅TCP生效）"""
@@ -138,7 +139,7 @@ class SocketServerManager(BaseSocketManager):
             conn.close()
         except Exception:
             pass
-        print(f"TCP服务端：客户端断开 {addr}，当前连接数: {len(self.connections)}")
+        logger.info(f"TCP Server: client disconnected {addr}, current connections: {len(self.connections)}")
 
 
 class SocketClientManager(BaseSocketManager):
@@ -154,7 +155,7 @@ class SocketClientManager(BaseSocketManager):
     async def connect(self, host: str, port: int, socket_type: Any) -> bool:
         """客户端：主动连接服务端（TCP真连接/UDP伪连接），返回连接结果"""
         if self.is_connected:
-            print(f"{socket_type.name}客户端：已连接服务端，无需重复连接")
+            logger.warning(f"{socket_type.name} Client: already connected!")
             return True
         try:
             self.conn = socket.socket(socket.AF_INET, socket_type)
@@ -170,11 +171,11 @@ class SocketClientManager(BaseSocketManager):
                 self.conn.connect(self.addr)
 
             self.is_connected = True
-            print(f"{socket_type.name}客户端：成功连接服务端 {host}:{port}")
+            logger.info(f"{socket_type.name} Client: connected to {host}:{port}")
             return True
         except Exception as e:
-            print(
-                f"{socket_type.name}客户端：连接服务端失败 {host}:{port}，原因: {str(e)}"
+            logger.exception(
+                f"{socket_type.name} Client: connected to {host}:{port} failed: {str(e)}"
             )
             self.conn = None
             self.addr = None
@@ -191,7 +192,7 @@ class SocketClientManager(BaseSocketManager):
                     pass
                 self.is_connected = False
                 self.conn = None
-                print(f"Socket客户端：主动断开与服务端 {self.addr} 的连接")
+                logger.info(f"Socket Client: disconnected {self.addr}")
 
     async def auto_reconnect(self):
         """客户端：断连自动重连（后台异步运行，TCP/UDP通用）"""
@@ -205,12 +206,12 @@ class SocketClientManager(BaseSocketManager):
                 self.component.max_reconnect != -1
                 and reconnect_count >= self.component.max_reconnect
             ):
-                print(
-                    f"Socket客户端：达到最大重连次数 {self.component.max_reconnect}，停止重连"
+                logger.info(
+                    f"Socket Client: Reached maximum reconnection attempts {self.component.max_reconnect}, stop reconnecting"
                 )
                 break
             # 尝试重连（传socket_type修复原代码缺参bug）
-            print(f"Socket客户端：第 {reconnect_count+1} 次重连服务端...")
+            logger.info(f"Socket Client: Attempting to reconnect to server for the {reconnect_count+1}th time...")
             if await self.connect(
                 self.component.socket_host,
                 self.component.socket_port,
@@ -252,7 +253,7 @@ class BaseSocketComponent(BaseComponent):
             return socket.SOCK_DGRAM
         elif _type == "tcp":
             return socket.SOCK_STREAM
-        raise KeyError(f"不支持的Socket类型: {_type}，仅支持tcp/udp")
+        raise KeyError(f"Unsupported Socket type: {_type}, only tcp/udp are supported")
 
     def _parse_common_config(self):
         """解析服务端/客户端/TCP/UDP通用配置"""
@@ -290,7 +291,7 @@ class BaseSocketComponent(BaseComponent):
         )
         if not rospy.core.is_initialized():
             rospy.init_node(node_name, anonymous=False)
-            print(f"Socket{node_suffix.capitalize()}初始化ROS节点: {node_name}")
+            logger.info(f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}")
 
     def _init_ros_pub_sub(self):
         """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
@@ -303,8 +304,8 @@ class BaseSocketComponent(BaseComponent):
         self.register_sub = rospy.Subscriber(
             register_topic, RegisterRequest, self._ros_register_callback, queue_size=10
         )
-        print(
-            f"Socket{'Server' if self.is_server else 'Client'} ROS Pub/Sub初始化完成: "
+        logger.info(
+            f"Socket{'Server' if self.is_server else 'Client'} ROS Pub/Sub initialized: "
             f"Pub={do_register_topic} | Sub={register_topic}"
         )
 
@@ -319,22 +320,22 @@ class BaseSocketComponent(BaseComponent):
         try:
             callback_url = req.path
             if not callback_url:
-                print("Socket ROS注册失败：path参数为空")
+                logger.error("Socket ROS registration failed: path parameter is empty")
                 return
-            print(
-                f"Socket{'Server' if self.is_server else 'Client'} ROS端动态注册回调: {callback_url}"
+            logger.info(
+                f"Socket{'Server' if self.is_server else 'Client'} dynamically registered callback from ROS: {callback_url}"
             )
         except Exception as e:
-            print(f"Socket ROS注册回调失败: {str(e)}")
+            logger.error(f"Socket ROS registration callback failed: {str(e)}")
 
     def do_register_trigger(self):
         """通用注册触发方法：向ROS发布Empty消息，触发其他节点注册"""
         if not self.enable_register:
-            print("Socket组件未启用ROS注册，无法触发do_register")
+            logger.warning("Socket component has disabled ROS registration, cannot trigger do_register")
             return
         self.do_register_pub.publish(Empty())
-        print(
-            f"Socket{'Server' if self.is_server else 'Client'} 触发ROS do_register消息发布"
+        logger.info(
+            f"Socket{'Server' if self.is_server else 'Client'} triggered ROS do_register message publication"
         )
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
@@ -348,16 +349,16 @@ class BaseSocketComponent(BaseComponent):
             # 线程安全注册回调
             with self.callback_lock:
                 self.callback_map[callback_url] = partial(callback, **kwargs)
-                print(
-                    f"Socket{'Server' if self.is_server else 'Client'} 注册回调成功: "
+                logger.info(
+                    f"Socket{'Server' if self.is_server else 'Client'} callback registered successfully: "
                     f"{callback_url.name} -> {callback.__name__}"
                 )
 
     def _start_async_thread(self, coro):
         """通用异步线程启动方法：与ROS主线程解耦，全场景复用"""
         if self.socket_thread and self.socket_thread.is_alive():
-            print(
-                f"Socket{'Server' if self.is_server else 'Client'} 已在运行，无需重复启动"
+            logger.info(
+                f"Socket{'Server' if self.is_server else 'Client'} is already running, no need to start again"
             )
             return
         # 守护线程：ROS退出时自动终止
@@ -365,7 +366,7 @@ class BaseSocketComponent(BaseComponent):
             target=asyncio.run, args=(coro,), daemon=True
         )
         self.socket_thread.start()
-        print(f"Socket{'Server' if self.is_server else 'Client'} 异步线程已启动")
+        logger.info(f"Socket{'Server' if self.is_server else 'Client'} async thread started")
 
 
 class SocketServerComponent(BaseSocketComponent):
@@ -406,7 +407,7 @@ class SocketServerComponent(BaseSocketComponent):
                     raise e
         except Exception as e:
             if not rospy_is_shutdown():
-                print(f"TCP服务端处理客户端 {addr} 异常: {str(e)}")
+                logger.error(f"TCP server error handling client {addr}: {str(e)}")
         finally:
             self.socket_mgr.remove_conn(conn, addr)
 
@@ -431,13 +432,13 @@ class SocketServerComponent(BaseSocketComponent):
                 if self._is_nonblocking_normal_error(e):
                     await asyncio.sleep(0.05)
                     continue
-                print(f"UDP服务端接收数据异常: {str(e)}")
+                logger.error(f"UDP server error receiving data: {str(e)}")
                 await asyncio.sleep(0.1)
 
     async def _run_tcp_server(self):
         """TCP服务端专属：异步主逻辑，监听+接受连接+多客户端处理"""
         self.server_sock.listen(8)  # 开启TCP监听
-        print(f"TCP服务端已启动监听: {self.socket_host}:{self.socket_port}")
+        logger.info(f"TCP server started listening on: {self.socket_host}:{self.socket_port}")
         while not rospy_is_shutdown():
             try:
                 # 接受TCP客户端连接，返回新的通信套接字
@@ -451,7 +452,7 @@ class SocketServerComponent(BaseSocketComponent):
                     await asyncio.sleep(0.05)  # 短暂延时，减少CPU空转
                     continue
                 # 其他错误才打印日志
-                print(f"TCP服务端接受连接异常: {str(e)}")
+                logger.error(f"TCP server error accepting connection: {str(e)}")
                 await asyncio.sleep(0.1)
         # 服务端关闭，清理所有TCP客户端连接
         for conn, addr in self.socket_mgr.connections:
@@ -472,7 +473,7 @@ class SocketServerComponent(BaseSocketComponent):
         if self.socket_type == socket.SOCK_STREAM:
             await self._run_tcp_server()
         else:
-            print(f"UDP服务端已启动监听: {self.socket_host}:{self.socket_port}")
+            logger.info(f"UDP server started listening on: {self.socket_host}:{self.socket_port}")
             await self._run_udp_server()
 
         # 服务端关闭，释放套接字
@@ -524,7 +525,7 @@ class SocketClientComponent(BaseSocketComponent):
                     raise e  # 其他错误抛出
 
                 if not data:  # 空数据表示TCP服务端断开，UDP无此情况
-                    print("TCP客户端：服务端主动断开连接")
+                    logger.info("TCP Client: Server disconnected actively")
                     self.socket_mgr.disconnect()
                     self.loop.create_task(self.socket_mgr.auto_reconnect())
                     break
@@ -535,7 +536,7 @@ class SocketClientComponent(BaseSocketComponent):
                     await self.socket_mgr.route_callback(data_str, addr)
             except Exception as e:
                 if not rospy_is_shutdown() and self.socket_mgr.is_connected:
-                    print(f"Socket客户端接收数据异常: {str(e)}")
+                    logger.error(f"Socket Client error receiving data: {str(e)}")
                     self.socket_mgr.disconnect()
                     self.loop.create_task(self.socket_mgr.auto_reconnect())
                 break
@@ -566,7 +567,7 @@ class SocketClientComponent(BaseSocketComponent):
         :param data: 待发送数据（字符串/字节流）
         """
         if not self.socket_mgr.is_connected or not self.socket_mgr.conn:
-            print("Socket客户端：未连接服务端，发送数据失败")
+            logger.error("Socket Client: Not connected to server, failed to send data")
             return
         # 统一转换为字节流
         data_bytes = data.encode("utf8") if isinstance(data, str) else data
@@ -578,7 +579,25 @@ class SocketClientComponent(BaseSocketComponent):
             self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        print(f"Socket客户端发送数据到服务端: 0x{data_bytes.hex()}")
+        logger.info(f"Socket Client sent data to server: 0x{data_bytes.hex()}")
+
+@dataclass
+class SocketConfig(BaseConfig):
+    host: str # 监听/连接的IP
+    port: int # 监听/连接的端口
+    socket_type: str # udp or tcp
+    router: Optional[Callable] = None # 数据包 -> callback_url
+    decode: Optional[bool] = False # 是否需要解码为字符串
+    buffer_size: Optional[int] = 256 # 接收缓冲区大小
+    register: Optional[bool] = False # 是否提供ros注册接口
+
+@dataclass
+class SocketClientConfig(SocketConfig):
+    target: type = field(default=SocketClientComponent, init=False)
+
+@dataclass
+class SocketClientConfig(SocketConfig):
+    target: type = field(default=SocketClientComponent, init=False)
 
 
 class sockets(BaseComponentHelper):
@@ -588,71 +607,8 @@ class sockets(BaseComponentHelper):
     def recv(cls, url: str, frequency: Optional[int] = None):
         return R._create_comp_decorator(SocketServerComponent, url, frequency=frequency)
 
-    @classmethod
-    def config(
-        cls,
-        host: str,
-        port: int,
-        socket_type: str,
-        router: Optional[Callable] = None,
-        decode: Optional[bool] = False,
-        buffer_size: Optional[int] = 256,
-        register: Optional[bool] = False,
-    ):
-        """配置SocketServerComponent
-
-        :param tcp/udp socket_type: 配置通过type指定协议
-        :param str host: 监听IP
-        :param int port: 监听端口
-        :param Callable router: 数据包 -> callback_url
-        :param bool decode: 是否需要解码为字符串
-        :param int buffer_size: 接收缓冲区大小
-        """
-        kwargs = {
-            "type": socket_type,
-            "host": host,
-            "port": port,
-            "router": router,
-            "decode": decode,
-            "buffer_size": buffer_size,
-            "register": register,
-        }
-        return cls.target, kwargs
-
-
 class socketc(BaseComponentHelper):
     target: Type["SocketClientComponent"] = SocketClientComponent
-
-    @classmethod
-    def config(
-        cls,
-        host: str,
-        port: int,
-        socket_type: str,
-        router: Optional[Callable] = None,
-        decode: Optional[bool] = False,
-        buffer_size: Optional[int] = 256,
-        register: Optional[bool] = False,
-    ):
-        """配置SocketServerComponent
-
-        :param tcp/udp socket_type: 配置通过type指定协议
-        :param str host: 监听IP
-        :param int port: 监听端口
-        :param Callable router: 数据包ID提取函数
-        :param bool decode: 是否需要解码为字符串
-        :param int buffer_size: 接收缓冲区大小
-        """
-        kwargs = {
-            "type": socket_type,
-            "host": host,
-            "port": port,
-            "router": router,
-            "decode": decode,
-            "buffer_size": buffer_size,
-            "register": register,
-        }
-        return cls.target, kwargs
 
     @classmethod
     def send_to_server(cls, manager: CallbackManager, data: Dict[str, Any]):

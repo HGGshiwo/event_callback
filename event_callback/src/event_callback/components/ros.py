@@ -1,26 +1,37 @@
+import copy
+from dataclasses import dataclass, field
 from functools import partial
+import logging
 from typing import Any, Dict, Optional, Type
+from xml.sax import handler
+
+from event_callback.utils import rospy_init_node
 
 try:
     import rospy
 except:
     pass
-from event_callback.core import R, BaseComponent, BaseComponentHelper, CallbackManager
+from event_callback.core import (
+    R,
+    BaseComponent,
+    BaseComponentHelper,
+    BaseConfig,
+    CallbackManager,
+)
 
 
 class ROSComponent(BaseComponent):
     """ROS Topic组件：仅负责ROS Topic回调的注册与处理，实现BaseComponent抽象方法"""
 
-    def __init__(self, **config: Dict[str, Any]):
-        super().__init__(**config)
+    def __init__(self, config: "ROSConfig"):
+        super().__init__(config)
         # 初始化ROS节点（确保全局仅初始化一次，避免重复初始化报错）
         self._init_ros_node()
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点，优先使用配置中的节点名，无配置则使用Manager类名小写"""
-        node_name = self.config.get("node_name", self.__class__.__name__.lower())
-        if not rospy.core.is_initialized():
-            rospy.init_node(node_name, anonymous=False)
+        node_name = self.__class__.__name__.lower()
+        rospy_init_node(node_name)
 
     def register_callbacks(self, callbacks) -> None:
         """从Manager的回调注册表中读取Topic回调，完成ROS Topic订阅注册"""
@@ -34,6 +45,10 @@ class ROSComponent(BaseComponent):
                 callback,
                 queue_size=queue_size,
             )
+
+@dataclass
+class ROSConfig(BaseConfig):
+    target: type = field(init=False, default=ROSComponent)
 
 
 class ros(BaseComponentHelper):
@@ -50,7 +65,3 @@ class ros(BaseComponentHelper):
         return R._create_comp_decorator(
             cls.target, topic_name, topic_type, queue_size, frequency=frequency
         )
-
-    @classmethod
-    def config(cls):
-        return cls.target, {}

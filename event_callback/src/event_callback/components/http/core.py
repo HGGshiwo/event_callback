@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Union
 
 from event_callback.components.http import MessageHandler, MessageType
@@ -15,7 +16,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from std_msgs.msg import String
-from event_callback.utils import dict2route, request2dict
+from event_callback.utils import dict2route, request2dict, rospy_init_node
 from starlette.middleware.gzip import GZipMiddleware
 
 try:
@@ -31,10 +32,14 @@ from event_callback.core import (
     R,
     BaseComponentHelper,
     BaseComponent,
+    BaseConfig,
     CallbackItem,
     CallbackManager,
 )
 from typing import List
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class HTTPComponent(BaseComponent):
@@ -124,15 +129,14 @@ class HTTPComponent(BaseComponent):
             try:
                 await ws.send_json(data)
             except Exception:
-                import traceback
-
-                traceback.print_exc()
                 self.remove_connection(ws)
 
-    def __init__(self, **config: Dict[str, Any]):
+    def __init__(self, config: "HTTPConfig"):
         """
         初始化FastAPI-ROS组件
+
         :param config: 组件配置参数，支持：
+
             - register: 布尔值，是否启用ROS register服务和do_register触发（默认False）
             - host: FastAPI服务地址（默认0.0.0.0）
             - port: FastAPI服务端口（默认8000）
@@ -140,19 +144,23 @@ class HTTPComponent(BaseComponent):
             - log_exclude_path: 忽略日志记录的路径
             - websocket_topic: 监听 websocket topic名称
         """
-        super().__init__(**config)
+        super().__init__(config)
         # 组件核心配置解析
-        self.enable_register = self.config.get("register", False)
-        self.fastapi_host = self.config.get("host", "0.0.0.0")
-        self.fastapi_port = self.config.get("port", 8000)
+        self.enable_register = config.register
+        self.fastapi_host = config.host
+        self.fastapi_port = config.port
 
         default_static_dir = Path(__file__).parent.parent / "static"
-        self.static_dir = Path(self.config.get("static_dir", default_static_dir))
+        static_dir = (
+            default_static_dir if config.static_dir is None else config.static_dir
+        )
+        self.static_dir = Path(static_dir)
         default_home_dir = Path(__file__).parents[5] / "event-callback-app" / "dist"
-        self.home_dir = Path(self.config.get("home_dir", default_home_dir))
+        home_dir = config.home_dir if config.home_dir is not None else default_home_dir
+        self.home_dir = Path(home_dir)
 
-        self.websockt_topic = self.config.get("websocket_topic", "ws")
-        self.log_exclude_path = self.config.get("log_exclude_path", [])
+        self.websockt_topic = config.websocket_topic
+        self.log_exclude_path = config.log_exclude_path
         # ROS相关初始化（确保节点全局唯一，避免重复初始化）
         if self.enable_register:
             self._init_ros_node()
@@ -174,16 +182,15 @@ class HTTPComponent(BaseComponent):
         if self.enable_register:
             self._init_ros_register_service()
             self.do_register_trigger()
-        print(f"FastapiRosComponent组件完成回调注册，register功能: {self.enable_register}")
+        logger.info(
+            f"HTTPComponent register done, register enable: {self.enable_register}"
+        )
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点（全局仅一次，节点名优先取配置，否则用Manager类名）"""
-        node_name = self.config.get(
-            "node_name", self.__class__.__name__.lower() + "_fastapi"
-        )
-        if not rospy.core.is_initialized():
-            rospy.init_node(node_name, anonymous=False)
-            print(f"Http组件初始化ROS节点: {node_name}")
+        node_name = self.__class__.__name__.lower()
+        rospy_init_node(node_name)
+        logger.info(f"HTTPComponent init ros-node: {node_name}")
 
     def _init_fastapi_middleware(self) -> None:
         """初始化FastAPI中间件：CORS跨域、日志过滤"""
@@ -202,12 +209,12 @@ class HTTPComponent(BaseComponent):
         self.app.add_middleware(
             GZipMiddleware,
             minimum_size=1024,  # 仅压缩大于 1KB 的响应（避免小文件压缩得不偿失）
-            compresslevel=6     # 压缩级别 1-9，6 是压缩率和性能的平衡值
+            compresslevel=6,  # 压缩级别 1-9，6 是压缩率和性能的平衡值
         )
 
     def _init_fastapi_static(self) -> None:
         """挂载静态文件目录（确保目录存在，避免报错）"""
-        print(f"home dir: {self.home_dir.absolute()}")
+        logger.info(f"home dir: {self.home_dir.absolute()}")
         if self.home_dir.exists():
             self.app.mount(
                 "/home",  # 访问路径根目录
@@ -221,9 +228,11 @@ class HTTPComponent(BaseComponent):
             self.app.mount(
                 "/static", StaticFiles(directory=self.static_dir), name="static"
             )
-            print(f"FastAPI静态文件目录: {self.static_dir.absolute()}")
+            logger.info(f"FastAPI static directory: {self.static_dir.absolute()}")
         else:
-            print(f"FastAPI静态文件目录不存在: {self.static_dir}，跳过挂载")
+            logger.info(
+                f"FastAPI static directory not exist: {self.static_dir}, skip mount"
+            )
 
     def _init_fastapi_routes(self) -> None:
         """初始化FastAPI基础路由：首页、视频流、WebRTC、注册接口、WebSocket"""
@@ -249,16 +258,10 @@ class HTTPComponent(BaseComponent):
                 # 心跳检测（超时无消息则循环，避免永久阻塞）
                 while True:
                     text = await websocket.receive_text()
-                    print(text)
+                    logger.info(f"ws received: {text}")
             except (WebSocketDisconnect, asyncio.TimeoutError):
-                # import traceback
-
-                # traceback.print_exc()
                 ws_manager.remove_connection(websocket)
             except Exception:
-                import traceback
-
-                traceback.print_exc()
                 ws_manager.remove_connection(websocket)
 
         @app.get("/page_config")
@@ -269,13 +272,13 @@ class HTTPComponent(BaseComponent):
         """初始化ROS register服务和do_register发布器（enable_register=True时调用）"""
         # 注册ROS /register服务，用于ROS端动态映射FastAPI路由
         rospy.Service("register", StringSrv, self._ros_register_callback)
-        print("FastAPI-ROS组件注册ROS服务: /register")
+        logger.info("HTTPComponent register ROS service: /register")
         # 创建do_register发布器，用于触发路由注册（std_msgs/Empty）
         self.do_register_pub = rospy.Publisher(
             "do_register", Empty, queue_size=10, latch=True
         )
         self.ws_sub = rospy.Subscriber(self.websockt_topic, String, self._ws_callback)
-        print("FastAPI-ROS组件创建ROS发布器: do_register")
+        logger.info("HTTPComponent create ROS topic: do_register")
 
     def _ws_callback(self, data: String):
         json_data = json.loads(data.data)
@@ -296,13 +299,13 @@ class HTTPComponent(BaseComponent):
             self.app.add_api_route(**route_kwargs)
             self.app.openapi_schema = None
             self.app.setup()
-            print(f"ROS端动态注册FastAPI路由: {method} {path} -> {topic}")
+            logger.info(f"Register FastAPI route from ROS: {method} {path} -> {topic}")
             return StringSrvResponse(
                 response=json.dumps({"status": "success", "msg": "OK"})
             )
 
         except Exception as e:
-            print(f"ROS注册路由失败: {e}")
+            logger.error(f"Register FastAPI route from ROS failed: {e}")
             return StringSrvResponse(
                 response=json.dumps({"status": "error", "msg": str(e)})
             )
@@ -312,13 +315,22 @@ class HTTPComponent(BaseComponent):
         config = Config(self.app, host=self.fastapi_host, port=self.fastapi_port)
         server = uvicorn.Server(config)
         self.loop = asyncio.get_event_loop()  # 保存事件循环，供WS广播使用
-        print(f"FastAPI服务启动: {self.fastapi_host}:{self.fastapi_port}")
+        logger.info(f"FastAPI service start: {self.fastapi_host}:{self.fastapi_port}")
+        
+        # 配置uvicorn的日志
+        uvicorn_logger_names = ["uvicorn", "uvicorn.access", "uvicorn.error"]
+        for logger_name in uvicorn_logger_names:
+            uvicorn_logger = logging.getLogger(logger_name)
+            # 清空uvicorn自带的Handler
+            uvicorn_logger.handlers.clear()
+            # 让uvicorn日志传递到根日志器处理
+            uvicorn_logger.propagate = True
         await server.serve()
 
     def start_fastapi_server(self) -> None:
         """启动FastAPI服务（独立线程），与ROS同步逻辑解耦，避免阻塞"""
         if self.server_thread and self.server_thread.is_alive():
-            print("FastAPI服务已在运行，无需重复启动")
+            logger.info("FastAPI service is already running! skip start")
             return
         # 创建异步线程运行FastAPI
         self.server_thread = threading.Thread(
@@ -327,15 +339,15 @@ class HTTPComponent(BaseComponent):
             daemon=True,  # 守护线程，ROS退出时自动终止
         )
         self.server_thread.start()
-        print("FastAPI服务线程已启动")
+        logger.info("FastAPI is running!")
 
     def do_register_trigger(self) -> None:
         """触发do_register发布：向ROS do_register话题发布Empty消息，供外部调用"""
         if not self.enable_register or not self.do_register_pub:
-            print("未启用register功能，无法触发do_register")
+            logger.info("register is disable, can't trigger do_register")
             return
         self.do_register_pub.publish(Empty())
-        print("FastAPI-ROS组件触发do_register发布")
+        logger.info("HTTPComponent trigger do_register")
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
         """实现BaseComponent抽象方法：组件核心回调/服务注册入口
@@ -348,6 +360,18 @@ class HTTPComponent(BaseComponent):
             methods = kwargs.get("methods", [])
             methods = methods + list(args[1:])
             self.app.add_api_route(args[0], endpoint=endpoint, methods=methods)
+
+
+@dataclass
+class HTTPConfig(BaseConfig):
+    target: type = field(init=False, default=HTTPComponent)
+    host: str = "0.0.0.0"
+    port: int = 8000
+    register: bool = False
+    static_dir: Union[str, Path, None] = None
+    home_dir: Union[str, Path, None] = None
+    websocket_topic: str = "ws"
+    log_exclude_path: List = field(default_factory=list)
 
 
 class http(BaseComponentHelper):
@@ -378,19 +402,3 @@ class http(BaseComponentHelper):
         if comp is None:  # 组件没有初始化完成，不允许调用
             return
         return comp.ws_manager.publish(json, data_type)
-
-    @classmethod
-    def config(
-        cls,
-        host: Optional[str] = "0.0.0.0",
-        port: Optional[int] = 8000,
-        register: Optional[bool] = False,
-        static_dir: Optional[Union[str, Path]] = None,
-    ):
-        kwargs = {
-            "host": host,
-            "port": port,
-            "register": register,
-            "static_dir": static_dir,
-        }
-        return cls.target, kwargs

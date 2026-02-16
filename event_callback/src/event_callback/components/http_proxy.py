@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import AsyncExitStack
+from dataclasses import dataclass, field
 from functools import partial
 import inspect
 from threading import Thread
@@ -15,7 +16,7 @@ from fastapi.dependencies.utils import solve_dependencies, get_dependant
 from fastapi.dependencies.models import Dependant
 import json, traceback
 from concurrent.futures import ThreadPoolExecutor
-
+import logging
 from event_callback.utils import (
     dict2request,
     rospy_is_shutdown,
@@ -35,14 +36,17 @@ except:
         pass
 
 
+logger = logging.getLogger(__name__)
+
+
 class HTTP_ProxyComponent(BaseComponent):
     """ROS Http代理组件：负责ROS Service回调注册、Http-ROS映射、触发订阅处理，实现BaseComponent抽象方法"""
 
-    def __init__(self, **config: Dict[str, Any]):
-        super().__init__(**config)
+    def __init__(self, config: "HTTP_ProxyConfig"):
+        super().__init__(config)
 
         self._init_ros_node()
-        self._receive_register = False # 是否收到了register请求，收到需要注册
+        self._receive_register = False  # 是否收到了register请求，收到需要注册
         self._init_ros_srv_config()  # 初始化ROS服务相关配置
         self._register_trigger_sub()  # 注册Service触发的订阅话题
         self._callbacks = None  # 记录下需要注册的路由
@@ -50,7 +54,7 @@ class HTTP_ProxyComponent(BaseComponent):
         self._event_loop = None
         self._thread = Thread(target=lambda: asyncio.run(self._run()), daemon=True)
         self._thread.start()
-
+        
     async def _run(self):
         self._event_loop = asyncio.get_event_loop()
         while not rospy_is_shutdown():
@@ -58,9 +62,9 @@ class HTTP_ProxyComponent(BaseComponent):
 
     def _init_ros_node(self) -> None:
         """初始化ROS节点，优先使用配置中的节点名，无配置则使用Manager类名小写"""
-        node_name = self.config.get("node_name", self.__class__.__name__.lower())
+        node_name = self.__class__.__name__.lower()
         if not rospy.core.is_initialized():
-            rospy.init_node(node_name, anonymous=False)
+            rospy.init_node(node_name, anonymous=True)
 
     def _init_ros_srv_config(self) -> None:
         """初始化ROS服务配置：等待注册服务、创建服务代理"""
@@ -71,7 +75,7 @@ class HTTP_ProxyComponent(BaseComponent):
 
     def _register_trigger_sub(self) -> None:
         """注册触发Service注册的Topic：收到空消息则执行Service注册"""
-        
+
         rospy.Subscriber("do_register", Empty, self._on_trigger_srv_register)
 
     def _on_trigger_srv_register(self, _: Any = None) -> None:
@@ -92,9 +96,7 @@ class HTTP_ProxyComponent(BaseComponent):
                 result = future.result()
                 return result
             except Exception as e:
-                import traceback
-
-                traceback.print_exc()
+                logger.exception(str(e))
 
         return sync_func
 
@@ -165,7 +167,6 @@ class HTTP_ProxyComponent(BaseComponent):
             reg_res = self.register_srv(json.dumps(route_data))
             if json.loads(reg_res.response)["status"] != "success":
                 raise ValueError(f"ROS HTTP mapping failed: {path} -> {srv_name}")
-            
 
     def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
         if self._callbacks is None:
@@ -175,6 +176,12 @@ class HTTP_ProxyComponent(BaseComponent):
         if self._receive_register:
             self._register_ros_services()
             self._receive_register = False
+
+
+@dataclass
+class HTTP_ProxyConfig:
+    target: type = field(init=False, default=HTTP_ProxyComponent)
+
 
 class http_proxy(BaseComponentHelper):
     target = HTTP_ProxyComponent
@@ -186,7 +193,3 @@ class http_proxy(BaseComponentHelper):
     @classmethod
     def get(cls, url: str):
         return R._create_comp_decorator(cls.target, url, "GET")
-
-    @classmethod
-    def config(cls):
-        return cls.target, {}

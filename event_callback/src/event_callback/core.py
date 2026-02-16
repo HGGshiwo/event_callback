@@ -1,3 +1,5 @@
+from dataclasses import dataclass, field
+import logging
 from abc import ABC, abstractmethod
 from types import MethodType
 from typing import (
@@ -14,6 +16,9 @@ from typing import (
 
 from event_callback.utils import get_classname, throttle
 from event_callback.types import CallbackItem, Decorator
+
+# 初始化logger
+logger = logging.getLogger(__name__)
 
 
 class Registery:
@@ -79,9 +84,9 @@ class CallbackMeta(type):
         instance = super().__call__(*args, **kwargs)
         cls._init_done = True
         if hasattr(instance, "_register_callbacks"):
-            instance._register_callbacks() 
+            instance._register_callbacks()
         if hasattr(instance, "_post_init"):
-            instance._post_init() # 注册所有组件之后调用
+            instance._post_init()  # 注册所有组件之后调用
         return instance
 
 
@@ -91,10 +96,10 @@ class CallbackMixin(metaclass=CallbackMeta):
     2. 允许绑定回调函数，回调函数的self指向Mixin
     """
 
-    def __init__(self, component_config: List[Any] = None):
+    def __init__(self, component_config: List["BaseConfig"] = None):
         component_config = component_config or []
         self.component_config = {
-            get_classname(config[0], False): (self, config[0], config[1])
+            get_classname(config.target, False): (self, config)
             for config in component_config
         }
         self._component_instances: Dict[str, BaseComponent] = {}
@@ -105,11 +110,9 @@ class CallbackMixin(metaclass=CallbackMeta):
         classname = get_classname(self, False)
         for comp_name in R._callback_map.get(classname, {}).keys():
             if comp_name not in self.component_config:
-                self.component_config[comp_name] = (
-                    self,
-                    R._component_map[comp_name],
-                    None,
-                )
+                config = BaseConfig()
+                config.target = R._component_map[comp_name]
+                self.component_config[comp_name] = (self, config)
 
     def get_component_instance(self, comp_cls: Type["T"]) -> T:
         comp_name = get_classname(comp_cls, False)
@@ -118,6 +121,7 @@ class CallbackMixin(metaclass=CallbackMeta):
     def _post_init(self):
         """生命周期函数, 在注册完成之后被调用"""
         pass
+
 
 class CallbackManager(CallbackMixin):
     """
@@ -132,7 +136,7 @@ class CallbackManager(CallbackMixin):
     ):
         """
         初始化所有的组件，建议在子类__init__最开始时就调用
-        
+
         :param list component_config: 组件初始化配置 {组件名: {配置参数}, ...} 如 {"ros": {"node_name": "drone"}}
         :param CallbackMixin mixins: 允许注册组件，但是不实例化组件
         """
@@ -150,31 +154,24 @@ class CallbackManager(CallbackMixin):
                 if comp_name not in self.component_config:
                     self.component_config[comp_name] = comp_cfg
                     continue
-                print(
-                    f"Wraning: {get_classname(mixin)} has duplicate component config for {comp_name}"
+                logger.warning(
+                    f"Warning: {get_classname(mixin)} has duplicate component config for {comp_name}"
                     f"with {get_classname(self.component_config[comp_name][0])}, skip the config"
                 )
 
         for comp_name, comp_cfg in self.component_config.items():
             # 初始化组件实例并绑定当前manager实例
-            try:
-                (manager_cls, comp_cls, comp_kwargs) = comp_cfg
-            except Exception as e:
-                print(
-                    f"Error in component: {comp_name}, ComponentHelper.config must return 2 items: [ComponentClass, kwargs]"
-                )
-                raise e
-            comp_kwargs = {} if comp_kwargs is None else comp_kwargs
-            comp_instance = comp_cls(**comp_kwargs)
+            (manager_cls, comp_config) = comp_cfg
+            comp_instance = BaseComponent.create(comp_config)
             self._component_instances[comp_name] = comp_instance
 
         # 所有的manager+mixin共享component
         for mixin in self.mixins:
             mixin._component_instances = self._component_instances
-    
+
     def _register_callbacks(self):
         for comp_name, comp_cfg in self.component_config.items():
-            (manager_cls, comp_cls, comp_kwargs) = comp_cfg
+            (manager_cls, comp_config) = comp_cfg
             classname = get_classname(manager_cls, False)
             callbacks = R._callback_map.get(classname, {}).get(comp_name, [])
             callbacks = [
@@ -183,14 +180,22 @@ class CallbackManager(CallbackMixin):
             ]
             comp_instance = self._component_instances.get(comp_name, None)
             if comp_instance is None:
-                raise ValueError(f"{comp_name}还未被初始化，无法注册回调!")
+                raise ValueError(
+                    f"{comp_name} has not been initialized, cannot register callbacks!"
+                )
             comp_instance.register_callbacks(callbacks)
+
+
+@dataclass
+class BaseConfig:
+    target: type = field(init=False)
+    pass
 
 
 class BaseComponent(ABC):
     """组件抽象基类：所有组件的父类，强制绑定CallbackManager子类实例，提供回调列表获取"""
 
-    def __init__(self, **config: Any):
+    def __init__(self, config: BaseConfig):
         self.config = config  # 组件初始化配置
 
     @abstractmethod
@@ -198,15 +203,13 @@ class BaseComponent(ABC):
         """组件核心抽象方法：实现自身的回调注册逻辑（如ROS订阅/HTTP路由注册）"""
         raise NotImplementedError()
 
+    @staticmethod
+    def create(config: BaseConfig):
+        return config.target(config)
+
 
 class BaseComponentHelper(ABC):
     """组件辅助抽象基类"""
-
-    # target: Type["BaseComponent"]
-
-    @classmethod
-    def config(cls, *args, **kwargs):
-        raise NotImplementedError()
 
     @classmethod
     def get_component_instance(cls, manager: CallbackManager):
