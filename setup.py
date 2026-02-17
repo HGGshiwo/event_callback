@@ -21,6 +21,6 @@ setup(
     packages=find_packages(exclude=["scripts", "launch", "test"]),
     # 声明Python包的依赖（和requirements.txt一致，可选）
     install_requires=requirements,
-    package_dir={"": "event_callback/src"},
+    package_dir={"": "event_callback"},
     python_requires=">=3.8",
 )
