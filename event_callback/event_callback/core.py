@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from functools import partial
 import logging
 from abc import ABC, abstractmethod
 from types import MethodType
@@ -45,9 +46,8 @@ class Registery:
     def _create_comp_decorator(
         self,
         comp_cls: Type["BaseComponent"],
-        *args: Any,
+        register_cb: Callable,
         frequency: Optional[float] = None,
-        **kwargs: Any,
     ) -> Decorator:
         """为指定组件生成装饰器，记录函数及装饰器参数到临时注册表"""
         comp_name = get_classname(comp_cls, False)
@@ -60,7 +60,8 @@ class Registery:
             callback_list = comp_map.get(comp_name, [])
             if frequency is not None:
                 func = throttle(frequency=frequency)(func)
-            callback_list.append((func, args, kwargs))
+            # func是回调函数, 绑定到CallbackManager, register_cb是注册方法，绑定到component
+            callback_list.append((func, register_cb))
             comp_map[comp_name] = callback_list
             self._callback_map[class_name] = comp_map
             return func
@@ -83,8 +84,9 @@ class CallbackMeta(type):
         # 在一开始就调用父类的super.__init__去实例化所有大家组件，后面就可以使用ros
         instance = super().__call__(*args, **kwargs)
         cls._init_done = True
-        if hasattr(instance, "_register_callbacks"):
-            instance._register_callbacks()
+        # 绑定到对象并进行实际注册
+        if hasattr(instance, "_bind_and_regiser"):
+            instance._bind_and_regiser()
         if hasattr(instance, "_post_init"):
             instance._post_init()  # 注册所有组件之后调用
         return instance
@@ -117,6 +119,22 @@ class CallbackMixin(metaclass=CallbackMeta):
     def get_component_instance(self, comp_cls: Type["T"]) -> T:
         comp_name = get_classname(comp_cls, False)
         return self._component_instances.get(comp_name)
+
+    def _bind_and_regiser(self):
+        cls_name = get_classname(self, False)
+        comp_map = R._callback_map.get(cls_name, None)
+        if comp_map is None:
+            return  # 没有注册任何回调
+        for comp_name, callback_list in comp_map.items():
+            comp_instance = self._component_instances.get(comp_name, None)
+            if comp_instance is None:
+                raise ValueError(
+                    f"{comp_name} has not been initialized, cannot register callbacks!"
+                )
+            for cb, register_cb in callback_list:
+                bind_cb = MethodType(cb, self)
+                bind_register_cb = MethodType(register_cb, comp_instance)
+                bind_register_cb(bind_cb)  # 进行注册
 
     def _post_init(self):
         """生命周期函数, 在注册完成之后被调用"""
@@ -169,22 +187,6 @@ class CallbackManager(CallbackMixin):
         for mixin in self.mixins:
             mixin._component_instances = self._component_instances
 
-    def _register_callbacks(self):
-        for comp_name, comp_cfg in self.component_config.items():
-            (manager_cls, comp_config) = comp_cfg
-            classname = get_classname(manager_cls, False)
-            callbacks = R._callback_map.get(classname, {}).get(comp_name, [])
-            callbacks = [
-                (MethodType(callback[0], manager_cls), *callback[1:])
-                for callback in callbacks
-            ]
-            comp_instance = self._component_instances.get(comp_name, None)
-            if comp_instance is None:
-                raise ValueError(
-                    f"{comp_name} has not been initialized, cannot register callbacks!"
-                )
-            comp_instance.register_callbacks(callbacks)
-
 
 @dataclass
 class BaseConfig:
@@ -197,11 +199,6 @@ class BaseComponent(ABC):
 
     def __init__(self, config: BaseConfig):
         self.config = config  # 组件初始化配置
-
-    @abstractmethod
-    def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
-        """组件核心抽象方法：实现自身的回调注册逻辑（如ROS订阅/HTTP路由注册）"""
-        raise NotImplementedError()
 
     @staticmethod
     def create(config: BaseConfig):

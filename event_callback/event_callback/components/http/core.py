@@ -155,15 +155,15 @@ class HTTPComponent(BaseComponent):
             default_static_dir if config.static_dir is None else config.static_dir
         )
         self.static_dir = Path(static_dir)
-        default_home_dir = Path(__file__).parents[5] / "event-callback-app" / "dist"
+        default_home_dir = Path(__file__).parents[4] / "event-callback-app" / "dist"
         home_dir = config.home_dir if config.home_dir is not None else default_home_dir
         self.home_dir = Path(home_dir)
 
         self.websockt_topic = config.websocket_topic
         self.log_exclude_path = config.log_exclude_path
         # ROS相关初始化（确保节点全局唯一，避免重复初始化）
-        if self.enable_register:
-            self._init_ros_node()
+        # if self.enable_register:
+        #     self._init_ros_node()
         self.do_register_pub = None  # do_register发布器（register=True时初始化）
 
         # FastAPI核心实例变量
@@ -186,11 +186,11 @@ class HTTPComponent(BaseComponent):
             f"HTTPComponent register done, register enable: {self.enable_register}"
         )
 
-    def _init_ros_node(self) -> None:
-        """初始化ROS节点（全局仅一次，节点名优先取配置，否则用Manager类名）"""
-        node_name = self.__class__.__name__.lower()
-        rospy_init_node(node_name)
-        logger.info(f"HTTPComponent init ros-node: {node_name}")
+    # def _init_ros_node(self) -> None:
+    #     """初始化ROS节点（全局仅一次，节点名优先取配置，否则用Manager类名）"""
+    #     node_name = self.__class__.__name__.lower()
+    #     rospy_init_node(node_name)
+    #     logger.info(f"HTTPComponent init ros-node: {node_name}")
 
     def _init_fastapi_middleware(self) -> None:
         """初始化FastAPI中间件：CORS跨域、日志过滤"""
@@ -243,6 +243,7 @@ class HTTPComponent(BaseComponent):
         async def index():
             """首页路由：返回静态index.html"""
             index_path = self.home_dir / "index.html"
+            print(index_path)
             return (
                 FileResponse(index_path)
                 if index_path.exists()
@@ -349,18 +350,6 @@ class HTTPComponent(BaseComponent):
         self.do_register_pub.publish(Empty())
         logger.info("HTTPComponent trigger do_register")
 
-    def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
-        """实现BaseComponent抽象方法：组件核心回调/服务注册入口
-        基类强制要求实现，此处作为FastAPI服务启动和ROS注册的统一入口
-        """
-        for callback, args, kwargs in callbacks:
-            # 不用partial是怕丢失__name__等meta信息
-            # endpoint = MethodType(callback, self.manager_instance)
-            endpoint = callback
-            methods = kwargs.get("methods", [])
-            methods = methods + list(args[1:])
-            self.app.add_api_route(args[0], endpoint=endpoint, methods=methods)
-
 
 @dataclass
 class HTTPConfig(BaseConfig):
@@ -379,7 +368,14 @@ class http(BaseComponentHelper):
 
     @classmethod
     def _base(cls, url: str, method: str, frequency: float):
-        return R._create_comp_decorator(cls.target, url, method, frequency=frequency)
+        def register_callback(self: HTTPComponent, callback: callable) -> None:
+            """实现BaseComponent抽象方法：组件核心回调/服务注册入口
+            基类强制要求实现，此处作为FastAPI服务启动和ROS注册的统一入口
+            """
+            # 不用partial是怕丢失__name__等meta信息
+            # endpoint = MethodType(callback, self.manager_instance)
+            self.app.add_api_route(url, endpoint=callback, methods=method)
+        return R._create_comp_decorator(cls.target, register_callback, frequency=frequency)
 
     @classmethod
     def post(cls, url: str, frequency: Optional[float] = None):

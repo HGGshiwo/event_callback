@@ -9,6 +9,7 @@ from typing import (
     Any,
     Awaitable,
     Dict,
+    Hashable,
     List,
     Callable,
     Optional,
@@ -242,7 +243,7 @@ class BaseSocketComponent(BaseComponent):
         self._parse_common_config()  # 解析通用配置
         self._init_core_var()  # 初始化核心变量
         if self.enable_register:
-            self._init_ros_node()  # 初始化ROS节点
+            # self._init_ros_node()  # 初始化ROS节点
             self._init_ros_pub_sub()  # 初始化ROS Pub/Sub
         self._init_socket_manager()  # 初始化专属Socket管理器
         self.do_register_trigger()  # 触发ROS节点注册Socket服务
@@ -291,15 +292,15 @@ class BaseSocketComponent(BaseComponent):
         self.callback_map = {}  # 回调函数映射: {url: callback_func}
         self.callback_lock = threading.Lock()  # 回调注册线程锁
 
-    def _init_ros_node(self):
-        """初始化ROS节点（服务端/客户端节点名区分，避免冲突）"""
-        node_suffix = "server" if self.is_server else "client"
-        node_name = self.__class__.__name__.lower() + node_suffix
-        rospy_init_node(node_name)
+    # def _init_ros_node(self):
+    #     """初始化ROS节点（服务端/客户端节点名区分，避免冲突）"""
+    #     node_suffix = "server" if self.is_server else "client"
+    #     node_name = self.__class__.__name__.lower() + node_suffix
+    #     rospy_init_node(node_name)
 
-        logger.info(
-            f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}"
-        )
+    #     logger.info(
+    #         f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}"
+    #     )
 
     def _init_ros_pub_sub(self):
         """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
@@ -347,22 +348,6 @@ class BaseSocketComponent(BaseComponent):
         logger.info(
             f"Socket{'Server' if self.is_server else 'Client'} triggered ROS do_register message publication"
         )
-
-    def register_callbacks(self, callbacks: List[CallbackItem]) -> None:
-        """实现BaseComponent抽象方法：通用回调注册入口（全场景复用）
-        @param callbacks: 回调列表，CallbackItem的args格式：(url)
-                          - url: 回调唯一标识
-        """
-        for callback, args, kwargs in callbacks:
-            callback_url = args[0]
-            # 初始化全局唯一的ID提取函数和映射表（仅首次注册生效）
-            # 线程安全注册回调
-            with self.callback_lock:
-                self.callback_map[callback_url] = partial(callback, **kwargs)
-                logger.info(
-                    f"Socket{'Server' if self.is_server else 'Client'} callback registered successfully: "
-                    f"{callback_url.name} -> {callback.__name__}"
-                )
 
     def _start_async_thread(self, coro):
         """通用异步线程启动方法：与ROS主线程解耦，全场景复用"""
@@ -621,8 +606,17 @@ class sockets(BaseComponentHelper):
     target = SocketServerComponent
 
     @classmethod
-    def recv(cls, url: str, frequency: Optional[int] = None):
-        return R._create_comp_decorator(SocketServerComponent, url, frequency=frequency)
+    def recv(cls, url: Hashable, frequency: Optional[int] = None):
+        def register_callback(self: BaseSocketComponent, callback: Callable):
+            with self.callback_lock:
+                self.callback_map[url] = callback
+                logger.info(
+                    f"SocketServer callback registered successfully: {url} -> {callback.__name__}"
+                )
+
+        return R._create_comp_decorator(
+            SocketServerComponent, register_callback, frequency=frequency
+        )
 
 
 class socketc(BaseComponentHelper):
