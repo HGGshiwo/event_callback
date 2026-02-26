@@ -1,43 +1,49 @@
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union
-
-from event_callback.components.http import MessageHandler, MessageType
-from event_callback.components.http.ui_config import BaseUIConfig
-import uvicorn
 import asyncio
 import json
-import threading
 import logging
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
-from uvicorn.config import Config
+from typing import Any, Dict, Optional, TypeAlias, Union
+
+import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
-from std_msgs.msg import String
-from event_callback.utils import dict2route, request2dict, rospy_init_node
 from starlette.middleware.gzip import GZipMiddleware
+from uvicorn.config import Config
+
+from event_callback.components.http.message_handler import MessageHandler, MessageType
+from event_callback.components.http.ui_config import BaseUIConfig
+
+from .utils import dict2route, request2dict
 
 try:
     import rospy
-    from std_msgs.msg import Empty
-    from event_callback_msg.srv import StringSrv, StringSrvRequest, StringSrvResponse
-except:
-    pass
+    from std_msgs.msg import Empty, String
 
+    from event_callback_msg.srv import StringSrv, StringSrvResponse
+except:
+    String: TypeAlias = Any
+    Empty: TypeAlias = Any
+    StringSrv: TypeAlias = Any
+    StringSrvRequest: TypeAlias = Any
+    StringSrvResponse: TypeAlias = Any
+
+
+import logging
+from typing import List
 
 # 组件基类导入
 from event_callback.core import (
-    R,
-    BaseComponentHelper,
     BaseComponent,
+    BaseComponentHelper,
     BaseConfig,
-    CallbackItem,
     CallbackManager,
+    R,
 )
-from typing import List
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -281,13 +287,13 @@ class HTTPComponent(BaseComponent):
         self.ws_sub = rospy.Subscriber(self.websockt_topic, String, self._ws_callback)
         logger.info("HTTPComponent create ROS topic: do_register")
 
-    def _ws_callback(self, data: String):
+    def _ws_callback(self, data: Any):
         json_data = json.loads(data.data)
         data_type: str = json_data.get("type", "state")
         data_type = getattr(MessageType, data_type.upper())
         self.ws_manager.publish(json_data, data_type)
 
-    def _ros_register_callback(self, req: StringSrvRequest) -> StringSrvResponse:
+    def _ros_register_callback(self, req: Any) -> Any:
         """ROS register服务回调：动态添加FastAPI路由，与HTTP接口逻辑一致"""
         try:
             route_data = json.loads(req.request)
@@ -317,7 +323,7 @@ class HTTPComponent(BaseComponent):
         server = uvicorn.Server(config)
         self.loop = asyncio.get_event_loop()  # 保存事件循环，供WS广播使用
         logger.info(f"FastAPI service start: {self.fastapi_host}:{self.fastapi_port}")
-        
+
         # 配置uvicorn的日志
         uvicorn_logger_names = ["uvicorn", "uvicorn.access", "uvicorn.error"]
         for logger_name in uvicorn_logger_names:
@@ -374,8 +380,11 @@ class http(BaseComponentHelper):
             """
             # 不用partial是怕丢失__name__等meta信息
             # endpoint = MethodType(callback, self.manager_instance)
-            self.app.add_api_route(url, endpoint=callback, methods=method)
-        return R._create_comp_decorator(cls.target, register_callback, frequency=frequency)
+            self.app.add_api_route(url, endpoint=callback, methods=[method])
+
+        return R._create_comp_decorator(
+            cls.target, register_callback, frequency=frequency
+        )
 
     @classmethod
     def post(cls, url: str, frequency: Optional[float] = None):

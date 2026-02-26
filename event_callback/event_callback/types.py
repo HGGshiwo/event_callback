@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Tuple
 
 # 装饰器类型定义：支持编辑器类型推导
 Decorator = Callable[..., Callable[[Callable], Callable]]

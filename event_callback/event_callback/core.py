@@ -1,22 +1,12 @@
-from dataclasses import dataclass, field
-from functools import partial
+import functools
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
+from dataclasses import dataclass, field
 from types import MethodType
-from typing import (
-    Optional,
-    Type,
-    Dict,
-    List,
-    Callable,
-    Any,
-    ClassVar,
-    Final,
-    TypeVar,
-)
+from typing import Any, Callable, ClassVar, Dict, Final, List, Optional, Type, TypeVar
 
-from event_callback.utils import get_classname, throttle
 from event_callback.types import CallbackItem, Decorator
+from event_callback.utils import get_classname, throttle
 
 # 初始化logger
 logger = logging.getLogger(__name__)

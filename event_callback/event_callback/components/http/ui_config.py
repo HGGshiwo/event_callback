@@ -1,6 +1,6 @@
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Dict, List, Any, Optional, TypeVar, Callable, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
 from event_callback.core import R
 from event_callback.utils import get_classname
@@ -198,7 +198,7 @@ class TableColumnConfig(ToDictMixin):
 
 @dataclass
 class TableConfig(BaseUIConfig):
-    config_type: str = "table" 
+    config_type: str = "table"
     columns: Dict[str, TableColumnConfig] = field(default_factory=dict)
 
 

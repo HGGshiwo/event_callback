@@ -1,45 +1,41 @@
-from dataclasses import dataclass, field
-import errno
-import socket
 import asyncio
-import threading
-from functools import partial
+import errno
 import logging
+import socket
+import threading
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Awaitable,
+    Callable,
     Dict,
     Hashable,
     List,
-    Callable,
     Optional,
     Tuple,
     Type,
+    TypeAlias,
     Union,
 )
 
 try:
-    import rospy
     from std_msgs.msg import Empty
     from event_callback_msg.srv import RegisterRequest
 except:
-    rospy = None
+    Empty: TypeAlias = Any
+    RegisterRequest: TypeAlias = Any
 
-    class RegisterRequest:
-        pass
-
-
-from event_callback.utils import get_classname, rospy_init_node, rospy_is_shutdown
 
 # 组件基类与类型导入
 from event_callback.core import (
-    R,
     BaseComponent,
     BaseComponentHelper,
     BaseConfig,
-    CallbackItem,
     CallbackManager,
+    R,
 )
+from event_callback.ros_utils import rospy_is_shutdown
+from event_callback.utils import get_classname
 
 # 公共类型别名
 ConnType = Union[socket.socket, None]
@@ -122,7 +118,9 @@ class SocketServerManager(BaseSocketManager):
 
     def __init__(self, component):
         super().__init__(component)
-        self.connections: List[Tuple[socket.socket, AddrType]] = []  # TCP客户端连接列表（UDP忽略）
+        self.connections: List[Tuple[socket.socket, AddrType]] = (
+            []
+        )  # TCP客户端连接列表（UDP忽略）
 
     def add_conn(self, conn: socket.socket, addr: AddrType):
         """服务端：添加客户端连接（线程安全，仅TCP生效）"""
@@ -237,14 +235,15 @@ class BaseSocketComponent(BaseComponent):
     服务端/客户端/TCP/UDP均继承此类，实现最大程度复用
     """
 
-    def __init__(self, is_server: bool, **config: Dict[str, Any]):
-        super().__init__(**config)
+    def __init__(self, is_server: bool, config: "SocketConfig"):
+        super().__init__(config)
         self.is_server = is_server  # 标识服务端/客户端
         self._parse_common_config()  # 解析通用配置
         self._init_core_var()  # 初始化核心变量
         if self.enable_register:
             # self._init_ros_node()  # 初始化ROS节点
-            self._init_ros_pub_sub()  # 初始化ROS Pub/Sub
+            # self._init_ros_pub_sub()  # 初始化ROS Pub/Sub
+            pass
         self._init_socket_manager()  # 初始化专属Socket管理器
         self.do_register_trigger()  # 触发ROS节点注册Socket服务
 
@@ -258,7 +257,7 @@ class BaseSocketComponent(BaseComponent):
 
     def _get_socket_type(self):
         """通过配置type获取套接字类型，统一小写判断"""
-        _type = self.config.get("type", "tcp").lower()
+        _type = self.config.socket_type.lower()
         if _type == "udp":
             return socket.SOCK_DGRAM
         elif _type == "tcp":
@@ -269,20 +268,19 @@ class BaseSocketComponent(BaseComponent):
         """解析服务端/客户端/TCP/UDP通用配置"""
         # 基础网络配置
         host = "0.0.0.0" if self.is_server else "127.0.0.1"
-        self.socket_host = self.config.get("host", host)
-        self.socket_port = self.config.get("port", 12345)
+        self.socket_host = self.config.host
+        self.socket_port = self.config.port
         self.socket_type = self._get_socket_type()  # TCP/UDP类型标识
-        self.id_extractor: Optional[Callable] = self.config.get("router")  # ID提取函数
-        self.buffer_size = self.config.get("buffer_size", 256)  # 接收缓冲区大小
-        self.decode = self.config.get("decode", False)  # 是否解码为字符串
+        self.id_extractor: Optional[Callable] = self.config.router  # ID提取函数
+        self.buffer_size = self.config.buffer_size  # 接收缓冲区大小
+        self.decode = self.config.decode  # 是否解码为字符串
         # ROS注册配置
-        self.enable_register = self.config.get("register", True)
-        self.ros_topic_prefix = self.config.get("ros_topic_prefix", "socket")
+        self.enable_register = self.config.register
         # 客户端专属配置（服务端忽略）
         # 重连间隔(秒)
-        self.reconnect_interval = self.config.get("reconnect_interval", 3.0)
+        self.reconnect_interval = self.config.reconnect_interval
         # 最大重连次数(-1=无限)
-        self.max_reconnect = self.config.get("max_reconnect", -1)
+        self.max_reconnect = self.config.max_reconnect
         # 异步/线程配置
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.socket_thread: Optional[threading.Thread] = None
@@ -302,21 +300,21 @@ class BaseSocketComponent(BaseComponent):
     #         f"Socket{node_suffix.capitalize()} initialized ROS node: {node_name}"
     #     )
 
-    def _init_ros_pub_sub(self):
-        """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
-        register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/register"
-        do_register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/do_register"
+    # def _init_ros_pub_sub(self):
+    #     """初始化ROS Pub/Sub（服务端/客户端话题名区分，避免冲突）"""
+    #     register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/register"
+    #     do_register_topic = f"{self.ros_topic_prefix}_{'server' if self.is_server else 'client'}/do_register"
 
-        self.do_register_pub = rospy.Publisher(
-            do_register_topic, Empty, queue_size=10, latch=True
-        )
-        self.register_sub = rospy.Subscriber(
-            register_topic, RegisterRequest, self._ros_register_callback, queue_size=10
-        )
-        logger.info(
-            f"Socket{'Server' if self.is_server else 'Client'} ROS Pub/Sub initialized: "
-            f"Pub={do_register_topic} | Sub={register_topic}"
-        )
+    #     self.do_register_pub = rospy.Publisher(
+    #         do_register_topic, Empty, queue_size=10, latch=True
+    #     )
+    #     self.register_sub = rospy.Subscriber(
+    #         register_topic, RegisterRequest, self._ros_register_callback, queue_size=10
+    #     )
+    #     logger.info(
+    #         f"Socket{'Server' if self.is_server else 'Client'} ROS Pub/Sub initialized: "
+    #         f"Pub={do_register_topic} | Sub={register_topic}"
+    #     )
 
     def _init_socket_manager(self):
         """初始化专属Socket管理器（服务端/客户端分别实例化）"""
@@ -375,8 +373,8 @@ class SocketServerComponent(BaseSocketComponent):
     :param int buffer_size: 接收缓冲区大小
     """
 
-    def __init__(self, **config: Dict[str, Any]):
-        super().__init__(is_server=True, **config)
+    def __init__(self, config: "SocketServerConfig"):
+        super().__init__(is_server=True, config=config)
         self.server_sock: ConnType = None
         self.start_socket_server()  # 启动服务端
 
@@ -461,7 +459,9 @@ class SocketServerComponent(BaseSocketComponent):
         """服务端统一入口：按socket_type分支执行TCP/UDP逻辑"""
         # 初始化通用服务端套接字（TCP/UDP共用）
         self.server_sock = socket.socket(socket.AF_INET, self.socket_type)
-        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # 端口复用
+        self.server_sock.setsockopt(
+            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1
+        )  # 端口复用
         self.server_sock.bind((self.socket_host, self.socket_port))
         self.server_sock.setblocking(False)
         self.loop = asyncio.get_event_loop()
@@ -495,8 +495,8 @@ class SocketClientComponent(BaseSocketComponent):
     :param int max_reconnect: 最大重连次数（-1=无限）
     """
 
-    def __init__(self, **config: Dict[str, Any]):
-        super().__init__(is_server=False, **config)
+    def __init__(self, config: "SocketClientConfig"):
+        super().__init__(is_server=False, config=config)
         self.start_socket_client()  # 启动客户端
 
     async def _recv_data_loop(self):
@@ -590,11 +590,13 @@ class SocketConfig(BaseConfig):
     decode: Optional[bool] = False  # 是否需要解码为字符串
     buffer_size: Optional[int] = 256  # 接收缓冲区大小
     register: Optional[bool] = False  # 是否提供ros注册接口
+    reconnect_interval: Optional[float] = 3
+    max_reconnect: Optional[float] = -1
 
 
 @dataclass
-class SocketClientConfig(SocketConfig):
-    target: type = field(default=SocketClientComponent, init=False)
+class SocketServerConfig(SocketConfig):
+    target: type = field(default=SocketServerComponent, init=False)
 
 
 @dataclass

@@ -1,18 +1,11 @@
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Type
 
-from event_callback.utils import rospy_init_node
-
 try:
     import rospy
 except:
     pass
-from event_callback.core import (
-    R,
-    BaseComponent,
-    BaseComponentHelper,
-    BaseConfig,
-)
+from event_callback.core import BaseComponent, BaseComponentHelper, BaseConfig, R
 
 
 class ROSComponent(BaseComponent):

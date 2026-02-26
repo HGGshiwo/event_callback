@@ -1,39 +1,31 @@
 import asyncio
+import inspect
+import json
+import logging
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
-import inspect
 from threading import Thread
+from typing import Any, Callable, TypeAlias
 
-from event_callback.core import (
-    R,
-    BaseComponentHelper,
-    BaseComponent,
-)
-from typing import Callable
-from fastapi.dependencies.utils import solve_dependencies, get_dependant
 from fastapi.dependencies.models import Dependant
-import json, traceback
-from concurrent.futures import ThreadPoolExecutor
-import logging
-from event_callback.utils import (
-    dict2request,
-    rospy_init_node,
-    rospy_is_shutdown,
-    route2dict,
-)
-from event_callback_msg.srv import StringSrvRequest, StringSrvResponse, StringSrv
+from fastapi.dependencies.utils import get_dependant, solve_dependencies
+
+from event_callback.core import BaseComponent, BaseComponentHelper, R
+from event_callback.ros_utils import rospy_is_shutdown
+
+from .utils import dict2request, route2dict
 
 try:
     import rospy
-    from std_msgs.msg import Empty
+    from event_callback_msg.srv import StringSrv, StringSrvRequest, StringSrvResponse
 except:
-
-    class ProcessRequest:  # type: ignore
-        pass
-
-    class ProcessRequestResponse:
-        pass
+    StringSrvRequest: TypeAlias = Any
+    StringSrvResponse: TypeAlias = Any
+    StringSrv: TypeAlias = Any
+    Empty: TypeAlias = Any
 
 
 logger = logging.getLogger(__name__)
