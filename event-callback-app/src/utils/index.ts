@@ -3,10 +3,10 @@ import axios, { type AxiosRequestConfig } from "axios";
 import { message } from "antd";
 
 export const wsURL = import.meta.env.DEV
-  ? `ws://localhost:8001/ws`
+  ? `ws://localhost:8000/ws`
   : "ws://" + window.location.host + "/ws";
 
-export const baseURL = import.meta.env.DEV ? `http://localhost:8001` : "/";
+export const baseURL = import.meta.env.DEV ? `http://localhost:8000` : "/";
 // 创建axios实例，统一配置
 const request = axios.create({
   baseURL, // 可根据实际环境修改

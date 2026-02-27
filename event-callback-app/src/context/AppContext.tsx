@@ -9,7 +9,7 @@ import {
 } from "react";
 import { type GlobalConfig } from "../config";
 import { httpRequest, sortByOrder, wsURL } from "../utils";
-import { Spin } from "antd";
+import { message, Spin } from "antd";
 import type { TableRowData } from "../components/Table";
 
 export interface LogItemData {
@@ -122,6 +122,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
               return { ...prev, ...data };
             } else {
               // 其他类型：追加到数组（如日志类数据）
+              if (dataType == "error") {
+                message.error(data?.error);
+              }
               const currentList = (prev[dataType] || []) as LogItemData[];
               return { ...prev, [dataType]: [...currentList, data] };
             }
