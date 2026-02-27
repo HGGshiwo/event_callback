@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   Modal,
   Form,
@@ -14,20 +15,30 @@ import { createRoot } from "react-dom/client";
 import { httpRequest } from "../utils";
 import { handleButtonClick, type ButtonItemConfig } from "./ButtonGroup";
 import { useCallback, useEffect, useState } from "react";
+import GroupTable from "./GroupTable";
 
 export interface FormItemConfig {
   name: string; // 表单标签名
   id: string; // 表单字段唯一标识
-  type: "input" | "slider" | "number" | "switch" | "select" | "radio";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type:
+    | "input"
+    | "slider"
+    | "number"
+    | "switch"
+    | "select"
+    | "radio"
+    | "group_table";
+
   default?: any; // 字段默认值
   max?: number; // 数值/滑块最大值
   min?: number; // 数值/滑块最小值
   step?: number; // 数值/滑块步长
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   options?: Record<string, any> | object; // 下拉框选项
   required?: boolean; // 是否必填（扩展字段）
   transform?: "json" | "JSON"; //需要转换的格式
+  columns?: Record<string, Record<string, any>>;
+  titleKey?: string;
 }
 
 export interface FormConfig {
@@ -90,7 +101,19 @@ export const getInput = (item: FormItemConfig, res: Record<string, any>) => {
           )}
         </Radio.Group>
       );
-
+    case "group_table":
+      // 测试用初始参数数据（包含多级group、不同类型值）
+      console.log(111, res?.titleKey || item.titleKey);
+      return (
+        <GroupTable
+          data={res?._value || []}
+          // 可选：自定义列配置（注释掉则用默认列）
+          columnConfig={Object.entries<any>(
+            res?.columns || item.columns || {},
+          ).map(([key, item]) => ({ key, ...item }))}
+          titleKey={res?.titleKey || item.titleKey}
+        />
+      );
     default:
       return null;
   }
@@ -106,29 +129,27 @@ const FormModal = ({
   onDestroy: () => void;
 }) => {
   // 1. 内部管理核心状态
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const [form] = Form.useForm<Record<string, any>>();
   const [modalVisible, setModalVisible] = useState<boolean>(
     formConfig.initialModalVisible ?? true, // 调用时默认显示
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-  const [modalFormData, setModalFormData] = useState<Record<string, any>>({});
+  const [, setModalFormData] = useState<Record<string, any>>({});
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [initialValues, setInitialValues] = useState<Record<string, any>>({});
   const [extraConfig, setExtraConfig] = useState<Record<string, any>>({}); // 支持接口直接返回默认值，或者是value+其他表单的props
   const [loading, setLoading] = useState<boolean>(true);
 
   // 辅助函数：从FormConfig.items中提取default值
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const getDefaultValues = useCallback((): Record<string, any> => {
     return Object.entries(formConfig.items).reduce(
       (acc, [key, item]) => {
         acc[key] = item.default ?? "";
         return acc;
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       {} as Record<string, any>,
     );
   }, [formConfig.items]);
@@ -139,7 +160,7 @@ const FormModal = ({
       // 清空之前的状态
       setModalFormData({});
       setInitialValues({});
-      let validData = getDefaultValues() || {};
+      const validData = getDefaultValues() || {};
       const config: Record<string, any> = {}; // 记录接口可能传入的配置
 
       // 若配置了url和method，请求接口获取初始值
@@ -166,7 +187,7 @@ const FormModal = ({
       // form.setFieldsValue(validData);
       setLoading(false);
     })();
-  }, []);
+  }, [formConfig.method, formConfig.url, getDefaultValues]);
 
   // 组件卸载时清理
   useEffect(() => {
@@ -177,7 +198,6 @@ const FormModal = ({
 
   // 4. 通用提交函数（调用handleButtonClick）
   const submitForm = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (params: Record<string, any>, buttonConfig: ButtonItemConfig) => {
       try {
         await handleButtonClick(buttonConfig, params);
@@ -189,8 +209,7 @@ const FormModal = ({
   );
   // 3. 表单值变化处理：更新内部状态 + 实时提交（若配置on_change）
   const onFormChange = useCallback(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (changedValues: Record<string, any>, allValues: Record<string, any>) => {
+    (_changedValues: Record<string, any>, allValues: Record<string, any>) => {
       // 更新内部表单数据状态
       setModalFormData(allValues);
 
@@ -232,7 +251,7 @@ const FormModal = ({
     } catch (error) {
       console.error("表单校验/提交失败：", error);
     }
-  }, [form, formConfig.submit, submitForm, onDestroy]);
+  }, [form, formConfig.submit, formConfig.items, onDestroy, submitForm]);
 
   // 6. 取消按钮点击逻辑：关闭弹窗并销毁组件
   const onCancel = useCallback(() => {
@@ -252,7 +271,7 @@ const FormModal = ({
         </Form.Item>
       );
     },
-    [initialValues],
+    [extraConfig],
   );
 
   // 弹窗标题默认值
@@ -278,7 +297,8 @@ const FormModal = ({
           {formConfig.submit?.name || "确定"}
         </Button>,
       ]}
-      width={window.innerWidth < 768 ? "90%" : 500} // 移动端自适应
+      width={"fit-content"}
+      style={{ minWidth: "300px" }}
       destroyOnHidden // 关闭弹窗时销毁表单，避免缓存
       maskClosable={false} // 点击遮罩层不关闭，防止误操作
     >
@@ -301,8 +321,8 @@ const FormModal = ({
  * 触发表单弹窗显示的函数（无Hooks，仅负责动态挂载组件）
  * @param formConfig 完整的表单配置
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-export const renderForm = (formConfig: FormConfig, params: any) => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export const renderForm = (formConfig: FormConfig, _params: any) => {
   // 1. 检查并创建唯一的DOM容器
   let container = document.getElementById(`form-modal`);
 

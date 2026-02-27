@@ -1,5 +1,6 @@
 import type { ButtonItemConfig } from "../components/ButtonGroup";
 import type { StateItemConfig } from "../components/StateDisplay";
+import type { TableGroupConfig } from "../components/TableGroup";
 
 // 确认按钮配置接口
 export interface ConfirmItemConfig {
@@ -19,6 +20,7 @@ export interface GlobalConfig {
   button: Record<string, ButtonItemConfig>; // 控制按钮配置
   joystick: Record<string, JoystickItemConfig>; //虚拟摇杆操作配置
   logbox: Record<string, LogTypeConfig>; // 日志框的配置
+  table: Record<string, TableGroupConfig>; // 表格的配置
 }
 
 // 核心类型定义（完全不变）

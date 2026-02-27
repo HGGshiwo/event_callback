@@ -70,7 +70,7 @@ export const ButtonGroup = () => {
             lg={4} // 小屏PC：6列
             xl={3} // 大屏PC：8列（适配几十个按钮）
           >
-            <Tooltip title={item.tip || "点击执行操作"} placement="top">
+            <Tooltip title={item.tip} placement="top">
               <Button
                 type="primary"
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any

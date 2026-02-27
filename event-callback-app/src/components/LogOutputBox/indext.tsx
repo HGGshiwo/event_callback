@@ -101,7 +101,11 @@ const LogOutputBox: FC<LogOutputBoxProps> = ({
   };
 
   return (
-    <Card title={title} style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+    <Card
+      className="mb-6 w-full"
+      title={title}
+      style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
+    >
       <div className="log-type-selector">
         <span className="selector-label">日志类型：</span>
         <Radio.Group
