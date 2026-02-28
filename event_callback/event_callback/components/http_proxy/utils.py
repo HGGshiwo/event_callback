@@ -13,8 +13,8 @@ from typing import (
     get_type_hints,
 )
 
-from fastapi import Path, Query, Request
-from fastapi.params import Body
+from fastapi import Request
+from fastapi.params import Body, Path, Query
 from pydantic import BaseModel
 from pydantic.json_schema import model_json_schema
 from starlette.datastructures import Headers, QueryParams

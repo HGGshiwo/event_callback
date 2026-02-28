@@ -4,7 +4,12 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, TypeAlias, Union
+
+try:
+    from typing import TypeAlias
+except ImportError:
+    from typing_extensions import TypeAlias
+from typing import Any, Dict, Optional, Type, Union
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -155,6 +160,7 @@ class HTTPComponent(BaseComponent):
         self.enable_register = config.register
         self.fastapi_host = config.host
         self.fastapi_port = config.port
+        self.message_type = config.message_type
 
         default_static_dir = Path(__file__).parent.parent / "static"
         static_dir = (
@@ -290,7 +296,7 @@ class HTTPComponent(BaseComponent):
     def _ws_callback(self, data: Any):
         json_data = json.loads(data.data)
         data_type: str = json_data.get("type", "state")
-        data_type = getattr(MessageType, data_type.upper())
+        data_type = getattr(self.message_type, data_type.upper())
         self.ws_manager.publish(json_data, data_type)
 
     def _ros_register_callback(self, req: Any) -> Any:
@@ -367,7 +373,7 @@ class HTTPConfig(BaseConfig):
     home_dir: Union[str, Path, None] = None
     websocket_topic: str = "ws"
     log_exclude_path: List = field(default_factory=list)
-
+    message_type: Type = MessageType
 
 class http(BaseComponentHelper):
     target = HTTPComponent

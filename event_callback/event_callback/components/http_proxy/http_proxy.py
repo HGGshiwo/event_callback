@@ -8,7 +8,12 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
 from threading import Thread
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable
+
+try:
+    from typing import TypeAlias
+except:
+    from typing_extensions import TypeAlias
 
 from fastapi.dependencies.models import Dependant
 from fastapi.dependencies.utils import get_dependant, solve_dependencies

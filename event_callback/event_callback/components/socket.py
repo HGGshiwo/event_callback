@@ -14,10 +14,14 @@ from typing import (
     Optional,
     Tuple,
     Type,
-    TypeAlias,
     Union,
 )
 
+try:
+    from typing import TypeAlias
+except:
+    from typing_extensions import TypeAlias
+    
 try:
     from std_msgs.msg import Empty
     from event_callback_msg.srv import RegisterRequest

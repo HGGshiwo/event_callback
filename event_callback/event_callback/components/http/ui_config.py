@@ -23,6 +23,7 @@ class LogboxDataType(Enum):
     INFO = "info"
     WARN = "warn"
     DEBUG = "debug"
+    EVENT = "event"
 
 
 class FormItemType(Enum):
@@ -200,6 +201,7 @@ class TableColumnConfig(ToDictMixin):
 class TableConfig(BaseUIConfig):
     config_type: str = "table"
     columns: Dict[str, TableColumnConfig] = field(default_factory=dict)
+    curIndexKey: Optional[str] = None
 
 
 @dataclass
@@ -277,7 +279,8 @@ class StatusConfig(BaseUIConfig):
 
     config_type: str = field(default="state", init=False)
     name: str = None  # 显示名称
-    default: str = "未知"
+    default: str = "未知"  # 默认值
+    collapse: bool = False  # 是否默认折叠
 
 
 @dataclass
@@ -307,6 +310,14 @@ LogboxConfig(
     backgroundColor="#EBF4FF",
     borderColor="#B3D1FF",
     label="info",
+)
+
+LogboxConfig(
+    type=LogboxDataType.EVENT,
+    color="#7C3AED",
+    backgroundColor="#F3E8FF",
+    borderColor="#C4B5FD",
+    label="event",
 )
 
 LogboxConfig(

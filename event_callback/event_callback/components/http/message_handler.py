@@ -122,3 +122,4 @@ class MessageType(BaseEnum):
     WARN = EventMessageHandler.create("warn")
     INFO = EventMessageHandler.create("info")
     DEBUG = EventMessageHandler.create("debug")
+    EVENT = EventMessageHandler.create("event")
