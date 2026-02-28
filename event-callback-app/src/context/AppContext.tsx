@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import {
   createContext,
   useContext,
@@ -8,7 +9,8 @@ import {
 } from "react";
 import { type GlobalConfig } from "../config";
 import { httpRequest, sortByOrder, wsURL } from "../utils";
-import { Spin } from "antd";
+import { message, Spin } from "antd";
+import type { TableRowData } from "../components/Table";
 
 export interface LogItemData {
   timestamp: number;
@@ -17,7 +19,7 @@ export interface LogItemData {
 
 // 上下文状态类型
 interface AppContextState {
-  stateData: Record<string, LogItemData[] | string>; // 配置化状态数据（与config.state对应）
+  stateData: Record<string, LogItemData[] | string | TableRowData | number>; // 配置化状态数据（与config.state对应）
   wsStatus: "connecting" | "open" | "closed" | "error"; // WS连接状态
   modalVisible: boolean; // Modal显隐
   modalKey: string; // 当前打开的Modal对应的click key
@@ -120,6 +122,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
               return { ...prev, ...data };
             } else {
               // 其他类型：追加到数组（如日志类数据）
+              if (dataType == "error") {
+                message.error(data?.error);
+              }
               const currentList = (prev[dataType] || []) as LogItemData[];
               return { ...prev, [dataType]: [...currentList, data] };
             }

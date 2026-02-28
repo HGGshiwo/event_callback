@@ -52,11 +52,18 @@ const LogOutputBox: FC<LogOutputBoxProps> = ({
   useEffect(() => {
     const logListData = logTypeConfigs.map((config) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const formatData = (data: Record<string, any>) => {
+        const other = Object.entries(data).reduce((prev, [k, v]) => {
+          if (k == "timestamp" || k == "type" || k == config.type) return prev;
+          return `${prev} [${k}] ${v}`;
+        }, "");
+        return `${data[config.type]} ${other}`;
+      };
       return (
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (stateData[config.type] as any[])?.map((data) => ({
           time: data["timestamp"],
-          content: data[config.type],
+          content: formatData(data),
           type: config.type,
           id: String(data["timestamp"]),
         })) || []
@@ -101,7 +108,11 @@ const LogOutputBox: FC<LogOutputBoxProps> = ({
   };
 
   return (
-    <Card title={title} style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+    <Card
+      className="mb-2 w-full"
+      title={title}
+      style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
+    >
       <div className="log-type-selector">
         <span className="selector-label">日志类型：</span>
         <Radio.Group

@@ -55,7 +55,7 @@ export const ButtonGroup = () => {
   return (
     <Card
       title="设备控制操作"
-      className="mb-6 w-full"
+      className="mb-2 w-full"
       variant="borderless"
       style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
     >
@@ -70,7 +70,7 @@ export const ButtonGroup = () => {
             lg={4} // 小屏PC：6列
             xl={3} // 大屏PC：8列（适配几十个按钮）
           >
-            <Tooltip title={item.tip || "点击执行操作"} placement="top">
+            <Tooltip title={item.tip} placement="top">
               <Button
                 type="primary"
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any

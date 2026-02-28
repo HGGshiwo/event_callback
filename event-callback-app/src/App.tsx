@@ -5,7 +5,7 @@ import { AppProvider } from "./context/AppContext";
 import { VirtualJoystickGroup } from "./components/VirtualJoystick";
 import LogOutputBox from "./components/LogOutputBox/indext";
 import { ConfigProvider, type ThemeConfig } from "antd";
-import { Table } from "./components/Table";
+import TableGroup from "./components/TableGroup";
 
 function App() {
   const theme: ThemeConfig = {
@@ -18,13 +18,14 @@ function App() {
     <AppProvider>
       <ConfigProvider theme={theme}>
         {/* 统一容器：PC端撑满#root，移动端100%宽度 */}
-        <div className="w-full h-full flex flex-col gap-4">
+
+        <div className="w-full h-full flex flex-col gap-2">
           <WSStatus />
-          <StateDisplay />
           <ButtonGroup />
+          <StateDisplay />
           <VirtualJoystickGroup />
           <LogOutputBox />
-          {/* <Table /> */}
+          <TableGroup />
         </div>
       </ConfigProvider>
     </AppProvider>
