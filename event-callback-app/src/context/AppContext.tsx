@@ -19,7 +19,7 @@ export interface LogItemData {
 
 // 上下文状态类型
 interface AppContextState {
-  stateData: Record<string, LogItemData[] | string | TableRowData>; // 配置化状态数据（与config.state对应）
+  stateData: Record<string, LogItemData[] | string | TableRowData | number>; // 配置化状态数据（与config.state对应）
   wsStatus: "connecting" | "open" | "closed" | "error"; // WS连接状态
   modalVisible: boolean; // Modal显隐
   modalKey: string; // 当前打开的Modal对应的click key

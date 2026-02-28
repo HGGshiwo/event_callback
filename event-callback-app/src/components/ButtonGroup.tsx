@@ -55,7 +55,7 @@ export const ButtonGroup = () => {
   return (
     <Card
       title="设备控制操作"
-      className="mb-6 w-full"
+      className="mb-2 w-full"
       variant="borderless"
       style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
     >

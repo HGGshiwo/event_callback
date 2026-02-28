@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 export interface TableGroupConfig {
   columns: Record<string, TableColumnConfig>;
+  curIndexKey?: string; // 使用ws这哪个数据作为高亮索引
 }
 
 export default function TableGroup() {
@@ -13,7 +14,9 @@ export default function TableGroup() {
   const tableConfig = useMemo(() => config?.table || {}, [config?.table]);
 
   const hasData = useMemo(() => {
-    return Object.keys(tableConfig).some((key) => !!stateData[key]?.length);
+    return Object.keys(tableConfig).some(
+      (key) => !!(stateData[key] as any[])?.length,
+    );
   }, [stateData, tableConfig]);
 
   return (
@@ -28,12 +31,13 @@ export default function TableGroup() {
           const columns = Object.entries(item.columns).map(
             ([colKey, item]) => ({ ...item, key: colKey }),
           );
-
+          const curIndex = item.curIndexKey && stateData[item.curIndexKey];
           return (
             <Table
               key={key}
               data={(stateData[key] as any) || []}
               columns={columns}
+              curIndex={curIndex as number}
             />
           );
         })}

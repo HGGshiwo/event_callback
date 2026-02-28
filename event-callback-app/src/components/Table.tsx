@@ -26,6 +26,7 @@ interface TableProps {
   onChange?: (value: TableEditValue) => void; // 外部回调，通知值变化
   style?: React.CSSProperties;
   InputComp?: any; // 输入组件
+  curIndex?: number; //当前高亮行
 }
 
 // 可编辑单元格组件（纯展示+事件转发，无内部状态依赖）
@@ -105,6 +106,7 @@ const Table: React.FC<TableProps> = ({
   onChange,
   style = {},
   InputComp,
+  curIndex,
 }) => {
   // 1. 合并原始数据和外部受控值：用value覆盖原始数据，保证展示最新值
   const tableData = useMemo(() => {
@@ -195,6 +197,18 @@ const Table: React.FC<TableProps> = ({
       // scroll={{ x: "auto", y: "auto" }} // 会导致高度失效
       style={{ ...style }}
       scroll={{ x: true }}
+      rowClassName={(_record, index) =>
+        index === curIndex ? "highlight-row" : ""
+      }
+      onRow={(_record, index) =>
+        index === curIndex
+          ? {
+              style: {
+                backgroundColor: "#ffe6a7",
+              },
+            }
+          : {}
+      }
     />
   );
 };

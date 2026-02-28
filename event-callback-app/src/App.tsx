@@ -19,10 +19,10 @@ function App() {
       <ConfigProvider theme={theme}>
         {/* 统一容器：PC端撑满#root，移动端100%宽度 */}
 
-        <div className="w-full h-full flex flex-col gap-4">
+        <div className="w-full h-full flex flex-col gap-2">
           <WSStatus />
-          <StateDisplay />
           <ButtonGroup />
+          <StateDisplay />
           <VirtualJoystickGroup />
           <LogOutputBox />
           <TableGroup />
