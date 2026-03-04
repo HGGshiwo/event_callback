@@ -25,6 +25,7 @@ from .utils import dict2request, route2dict
 
 try:
     import rospy
+
     from event_callback_msg.srv import StringSrv, StringSrvRequest, StringSrvResponse
 except:
     StringSrvRequest: TypeAlias = Any

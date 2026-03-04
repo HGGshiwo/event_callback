@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Type
 
@@ -5,6 +6,8 @@ try:
     import rospy
 except:
     pass
+from std_msgs.msg import String
+
 from event_callback.core import BaseComponent, BaseComponentHelper, BaseConfig, R
 
 
@@ -29,6 +32,27 @@ class ROSConfig(BaseConfig):
 
 class ros(BaseComponentHelper):
     target = ROSComponent
+
+    @staticmethod
+    def create_wsproxy():
+        class WSProxy:
+            def __init__(self):
+                self.pub = rospy.Publisher("/mavproxy/ws", String, queue_size=1)
+
+            def _send(self, data: dict):
+                self.pub.publish(json.dumps(data))
+
+            def info(self, data: dict):
+                self._send(dict(info=data, type="info"))
+
+            def error(self, data: dict):
+                self._send(dict(error=data, type="error"))
+
+            def state(self, data: dict):
+                data["type"] = "state"
+                self._send(data)
+
+        return WSProxy()
 
     @classmethod
     def topic(

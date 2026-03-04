@@ -9,6 +9,7 @@ try:
     from typing import TypeAlias
 except ImportError:
     from typing_extensions import TypeAlias
+
 from typing import Any, Dict, Optional, Type, Union
 
 import uvicorn
@@ -374,6 +375,7 @@ class HTTPConfig(BaseConfig):
     websocket_topic: str = "ws"
     log_exclude_path: List = field(default_factory=list)
     message_type: Type = MessageType
+
 
 class http(BaseComponentHelper):
     target = HTTPComponent

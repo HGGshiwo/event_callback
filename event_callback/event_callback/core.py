@@ -169,7 +169,7 @@ class CallbackManager(CallbackMixin):
 
         for comp_name, comp_cfg in self.component_config.items():
             # 初始化组件实例并绑定当前manager实例
-            (manager_cls, comp_config) = comp_cfg
+            manager_cls, comp_config = comp_cfg
             comp_instance = BaseComponent.create(comp_config)
             self._component_instances[comp_name] = comp_instance
 

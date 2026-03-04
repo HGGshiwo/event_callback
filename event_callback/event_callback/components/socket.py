@@ -21,9 +21,10 @@ try:
     from typing import TypeAlias
 except:
     from typing_extensions import TypeAlias
-    
+
 try:
     from std_msgs.msg import Empty
+
     from event_callback_msg.srv import RegisterRequest
 except:
     Empty: TypeAlias = Any
@@ -204,14 +205,10 @@ class SocketClientManager(BaseSocketManager):
                 self.conn = None
                 logger.info(f"Socket Client: disconnected {self.addr}")
 
-    async def auto_reconnect(self):
-        """客户端：断连自动重连（后台异步运行，TCP/UDP通用）"""
-        if self.reconnect_task and not self.reconnect_task.done():
-            return
+    async def _do_reconnect(self):
+        """内部重连逻辑"""
         reconnect_count = 0
-        self.reconnect_task = asyncio.current_task()
-        while rospy_is_shutdown() and not self.is_connected:
-            # 达到最大重连次数则停止（-1表示无限重连）
+        while not rospy_is_shutdown() and not self.is_connected:
             if (
                 self.component.max_reconnect != -1
                 and reconnect_count >= self.component.max_reconnect
@@ -220,7 +217,6 @@ class SocketClientManager(BaseSocketManager):
                     f"Socket Client: Reached maximum reconnection attempts {self.component.max_reconnect}, stop reconnecting"
                 )
                 break
-            # 尝试重连（传socket_type修复原代码缺参bug）
             logger.info(
                 f"Socket Client: Attempting to reconnect to server for the {reconnect_count+1}th time..."
             )
@@ -232,6 +228,15 @@ class SocketClientManager(BaseSocketManager):
                 break
             reconnect_count += 1
             await asyncio.sleep(self.component.reconnect_interval)
+
+    def auto_reconnect(self):
+        """客户端：断连自动重连（后台异步运行，TCP/UDP通用）
+        如果已有重连任务在运行，则跳过，避免重复重连
+        """
+        if self.reconnect_task and not self.reconnect_task.done():
+            return
+        loop = asyncio.get_event_loop()
+        self.reconnect_task = loop.create_task(self._do_reconnect())
 
 
 class BaseSocketComponent(BaseComponent):
@@ -530,7 +535,7 @@ class SocketClientComponent(BaseSocketComponent):
                 if not data:  # 空数据表示TCP服务端断开，UDP无此情况
                     logger.info("TCP Client: Server disconnected actively")
                     self.socket_mgr.disconnect()
-                    self.loop.create_task(self.socket_mgr.auto_reconnect())
+                    self.socket_mgr.auto_reconnect()
                     break
                 # 解码并路由回调
                 if data_str := await self.socket_mgr.decode_data(
@@ -541,7 +546,7 @@ class SocketClientComponent(BaseSocketComponent):
                 if not rospy_is_shutdown() and self.socket_mgr.is_connected:
                     logger.error(f"Socket Client error receiving data: {str(e)}")
                     self.socket_mgr.disconnect()
-                    self.loop.create_task(self.socket_mgr.auto_reconnect())
+                    self.socket_mgr.auto_reconnect()
                 break
 
     async def _run_client(self):
@@ -551,7 +556,7 @@ class SocketClientComponent(BaseSocketComponent):
         if not await self.socket_mgr.connect(
             self.socket_host, self.socket_port, self.socket_type
         ):
-            await self.socket_mgr.auto_reconnect()
+            self.socket_mgr.auto_reconnect()
         # 持续接收数据，断开则自动重连
         while not rospy_is_shutdown():
             if self.socket_mgr.is_connected and self.socket_mgr.conn:
@@ -571,6 +576,7 @@ class SocketClientComponent(BaseSocketComponent):
         """
         if not self.socket_mgr.is_connected or not self.socket_mgr.conn:
             logger.error("Socket Client: Not connected to server, failed to send data")
+            self.socket_mgr.auto_reconnect()
             return
         # 统一转换为字节流
         data_bytes = data.encode("utf8") if isinstance(data, str) else data
@@ -582,7 +588,7 @@ class SocketClientComponent(BaseSocketComponent):
             self.loop,
         )
         # 日志打印（忽略非UTF8数据解码错误）
-        logger.info(f"Socket Client sent data to server: 0x{data_bytes.hex()}")
+        # logger.info(f"Socket Client sent data to server: 0x{data_bytes.hex()}")
 
 
 @dataclass
