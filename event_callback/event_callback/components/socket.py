@@ -101,7 +101,7 @@ class BaseSocketManager:
         try:
             callback_url = self.component.id_extractor(data_str)
             if callback_url not in self.component.callback_map:
-                logger.error(f"No callback match ID: {callback_url}!")
+                # logger.error(f"No callback match ID: {callback_url}!")
                 return
         except Exception as e:
             logger.error(f"Socket extract id failed: {str(e)}")

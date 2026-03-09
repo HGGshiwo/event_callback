@@ -242,7 +242,7 @@ async def dict2request(request_data: Dict[str, Any]) -> Request:
         "headers": headers.raw,  # Headers（必需，影响 Content-Type 解析）
         # 非必需字段用空值/默认值填充（避免 solve_dependencies 报错）
         "fastapi_function_astack": AsyncExitStack(),
-        "fastapi_innner_astack": AsyncExitStack(),
+        "fastapi_inner_astack": AsyncExitStack(),
         "app": object(),  # 用空对象替代真实 app 实例
         "raw_path": b"",
         "scheme": "http",
