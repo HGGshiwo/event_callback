@@ -92,7 +92,11 @@ class HTTPComponent(BaseComponent):
         async def __call__(self, request: Request):
             """解析FastAPI请求（路径/查询/体参数），调用ROS服务并返回JSON响应"""
             request_json = await request2dict(request)
-            ros_resp = self.ros_srv_proxy(request=json.dumps(request_json))
+            loop = asyncio.get_event_loop()
+            ros_resp = await loop.run_in_executor(
+                None, 
+                lambda: self.ros_srv_proxy(request=json.dumps(request_json))
+            )
             return json.loads(ros_resp.response)
 
     class WSManager:
