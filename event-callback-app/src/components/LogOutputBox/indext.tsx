@@ -1,7 +1,7 @@
 import React, { useState, type FC, useRef, useEffect, useMemo } from "react";
 import { Radio, Card, type RadioChangeEvent } from "antd";
 import "./index.css";
-import { useAppContext } from "../../context/AppContext";
+import { useAppStore } from "../../store/useAppStore";
 
 export interface LogItem {
   id: string;
@@ -37,7 +37,7 @@ const LogOutputBox: FC<LogOutputBoxProps> = ({
   logListHeight = 300,
   title = "日志输出框",
 }) => {
-  const { stateData, config } = useAppContext();
+  const { stateData, config } = useAppStore();
 
   const [selectedType, setSelectedType] = useState<string>("all");
 

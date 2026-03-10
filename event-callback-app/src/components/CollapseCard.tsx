@@ -43,7 +43,7 @@ export const CollapseCard: React.FC<CollapseCardProps> = ({
         }
         {...rest}
       >
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-8 gap-3  sm:gap-4 md:gap-4 lg:gap-4 w-full">
+        <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-8 gap-3  sm:gap-4 md:gap-4 lg:gap-4 w-full">
           {displayKey.map((key) => {
             return renderItem(key, config[key]);
           })}

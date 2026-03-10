@@ -1,5 +1,5 @@
 import { Button, Tooltip, Card, Row, Col } from "antd";
-import { useAppContext } from "../context/AppContext";
+import { useAppStore } from "../store/useAppStore";
 import { message } from "antd";
 import { renderForm, type FormConfig } from "./ModalForm";
 import { renderToast, type ToastConfig } from "./Toast";
@@ -49,9 +49,7 @@ export const handleButtonClick = async (
 };
 
 export const ButtonGroup = () => {
-  const { config } = useAppContext();
-  const clickConfig = config?.button || {};
-
+  const config = useAppStore((state) => state.config?.button) || {};
   return (
     <Card
       title="设备控制操作"
@@ -61,7 +59,7 @@ export const ButtonGroup = () => {
     >
       {/* 优化：PC端撑满，移动端4列（更紧凑），平板3列，PC端6列/8列 */}
       <Row gutter={[12, 12]} className="w-full">
-        {Object.entries(clickConfig).map(([key, item]) => (
+        {Object.entries(config).map(([key, item]) => (
           <Col
             key={key}
             xs={8} // 移动端：4列（320px屏也能放下）
@@ -74,7 +72,7 @@ export const ButtonGroup = () => {
               <Button
                 type="primary"
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                onClick={() => handleButtonClick(config?.button[key] as any)}
+                onClick={() => handleButtonClick(config[key] as any)}
                 size="large" // 按钮尺寸微调，更紧凑
                 className="w-full"
               >

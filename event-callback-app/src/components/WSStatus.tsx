@@ -1,8 +1,8 @@
 import { Tag } from 'antd';
-import { useAppContext } from '../context/AppContext';
+import { useAppStore } from '../store/useAppStore';
 
 export const WSStatus = () => {
-  const { wsStatus } = useAppContext();
+  const wsStatus = useAppStore(state => state.wsStatus);
 
   const getStatusTag = () => {
     switch (wsStatus) {

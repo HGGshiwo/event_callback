@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Card } from "antd";
-import { useAppContext } from "../context/AppContext";
+import { useAppStore } from "../store/useAppStore";
 import Table, { type TableColumnConfig } from "./Table";
 import { useMemo } from "react";
 
@@ -10,7 +10,7 @@ export interface TableGroupConfig {
 }
 
 export default function TableGroup() {
-  const { config, stateData } = useAppContext();
+  const { config, stateData } = useAppStore();
   const tableConfig = useMemo(() => config?.table || {}, [config?.table]);
 
   const hasData = useMemo(() => {

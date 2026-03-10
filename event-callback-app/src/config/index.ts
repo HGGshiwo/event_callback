@@ -14,6 +14,18 @@ export interface JoystickItemConfig {
   url: string;
 }
 
+export interface WaypointVisConfig {
+  waypointApi: {
+    method: "GET" | "POST" | "PUT" | "DELETE";
+    url: string;
+  };
+  followApi: {
+    method: "GET" | "POST" | "PUT" | "DELETE";
+    url: string;
+    interval?: number;
+  };
+}
+
 // 全局配置接口
 export interface GlobalConfig {
   state: Record<string, StateItemConfig>; // 状态展示配置
@@ -21,6 +33,7 @@ export interface GlobalConfig {
   joystick: Record<string, JoystickItemConfig>; //虚拟摇杆操作配置
   logbox: Record<string, LogTypeConfig>; // 日志框的配置
   table: Record<string, TableGroupConfig>; // 表格的配置
+  waypointVis?: WaypointVisConfig;
 }
 
 // 核心类型定义（完全不变）

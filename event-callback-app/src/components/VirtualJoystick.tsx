@@ -6,7 +6,7 @@ import React, {
   type MouseEvent,
   type CSSProperties,
 } from "react";
-import { useAppContext } from "../context/AppContext";
+import { useAppStore } from "../store/useAppStore";
 import { httpRequest } from "../utils";
 
 // 摇杆移动时的回调参数类型
@@ -221,7 +221,7 @@ const VirtualJoystick: React.FC<VirtualJoystickProps> = (props) => {
 };
 
 function VirtualJoystickGroup() {
-  const { config } = useAppContext();
+  const config = useAppStore(state => state.config);
   const joystickConfig = config?.joystick || {};
   const containerStyle: CSSProperties = {
     zIndex: 9999,

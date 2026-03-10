@@ -1,11 +1,12 @@
+import { useEffect } from "react";
 import { WSStatus } from "./components/WSStatus";
 import { StateDisplay } from "./components/StateDisplay";
 import { ButtonGroup } from "./components/ButtonGroup";
-import { AppProvider } from "./context/AppContext";
+import { useAppStore, cleanupWebSocket } from "./store/useAppStore";
 import { VirtualJoystickGroup } from "./components/VirtualJoystick";
 import LogOutputBox from "./components/LogOutputBox/indext";
-import { ConfigProvider, type ThemeConfig } from "antd";
-import TableGroup from "./components/TableGroup";
+import { ConfigProvider, Spin, type ThemeConfig } from "antd";
+import WaypointEditor from "./components/WaypointEditor";
 
 function App() {
   const theme: ThemeConfig = {
@@ -14,21 +15,33 @@ function App() {
     },
   };
 
-  return (
-    <AppProvider>
-      <ConfigProvider theme={theme}>
-        {/* 统一容器：PC端撑满#root，移动端100%宽度 */}
+  const initApp = useAppStore((state) => state.initApp);
+  const wsStatus = useAppStore((state) => state.wsStatus);
+  useEffect(() => {
+    initApp();
+    return () => {
+      cleanupWebSocket();
+    };
+  }, [initApp]);
 
+  return (
+    <Spin
+      spinning={wsStatus !== "open"}
+      delay={500}
+      size="large"
+      tip="尝试websocket连接中..."
+    >
+      <ConfigProvider theme={theme}>
         <div className="w-full h-full flex flex-col gap-2">
           <WSStatus />
           <ButtonGroup />
           <StateDisplay />
           <VirtualJoystickGroup />
-          <LogOutputBox />
-          <TableGroup />
+          <LogOutputBox /> 
+          <WaypointEditor />
         </div>
       </ConfigProvider>
-    </AppProvider>
+    </Spin>
   );
 }
 

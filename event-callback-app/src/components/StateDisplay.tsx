@@ -1,4 +1,4 @@
-import { useAppContext } from "../context/AppContext";
+import { useAppStore } from "../store/useAppStore";
 import { CollapseCard } from "./CollapseCard";
 
 export interface StateItemConfig {
@@ -8,8 +8,28 @@ export interface StateItemConfig {
   collapse?: boolean; // 是否默认折叠（不展开时显示）
 }
 
+const DisplayItem = ({ itemKey, cfg }: { cfg: StateItemConfig; itemKey: string }) => {
+  const value = useAppStore((state) => state.stateData[itemKey]);
+
+  return (
+    <div
+      key={itemKey}
+      className="rounded-lg shadow-sm bg-slate-50
+                          p-2 sm:p-3 md:p-3 lg:p-3
+                          h-full flex flex-col justify-start"
+    >
+      <div className="text-xs sm:text-sm text-gray-500 mb-1 truncate">
+        {cfg.name}
+      </div>
+      <div className="text-base sm:text-lg font-bold text-gray-800 break-all">
+        {value as string}
+      </div>
+    </div>
+  );
+};
+
 export const StateDisplay = () => {
-  const { stateData, config } = useAppContext();
+  const config = useAppStore(state => state.config);
   const stateConfig = config?.state || {};
 
   return (
@@ -18,24 +38,9 @@ export const StateDisplay = () => {
       className="mb-2 w-full"
       variant="borderless"
       config={stateConfig}
-      renderItem={(key, cfg) => {
-          const itemConfig = cfg as StateItemConfig;
-          return (
-            <div
-              key={key}
-              className="rounded-lg shadow-sm bg-slate-50
-                          p-2 sm:p-3 md:p-3 lg:p-3
-                          h-full flex flex-col justify-start"
-            >
-              <div className="text-xs sm:text-sm text-gray-500 mb-1 truncate">
-                {itemConfig.name}
-              </div>
-              <div className="text-base sm:text-lg font-bold text-gray-800 break-all">
-                {stateData[key] as string}
-              </div>
-            </div>
-          );
-        }}
+      renderItem={(key, cfg) => (
+        <DisplayItem itemKey={key} cfg={cfg as StateItemConfig} />
+      )}
     />
   );
 };
