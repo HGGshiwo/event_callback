@@ -1,9 +1,4 @@
-import React, {
-  useRef,
-  useEffect,
-  useState,
-  useCallback,
-} from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
   Button,
   InputNumber,
@@ -185,6 +180,7 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
     currentMousePoint: null as Point | null,
     fixedHeading: false,
     followHeight: DEFAULT_HEIGHT,
+    followSpeed: 2,
     isFollowing: false,
   });
 
@@ -702,7 +698,14 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
         }
       }
     },
-    [mode, pushToHistory, isEditing, originRef, worldToLatLon, followState.isDrawing],
+    [
+      mode,
+      pushToHistory,
+      isEditing,
+      originRef,
+      worldToLatLon,
+      followState.isDrawing,
+    ],
   );
 
   const handleMouseLeave = useCallback(() => {
@@ -764,32 +767,20 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
               dy: followState.currentMousePoint.y - followState.startPoint!.y,
             }
           : { dx: 0, dy: 0 };
+        const yaw = Math.atan2(
+          -direction.dx / METERS_PER_DEGREE_LON(origin.lat),
+          -direction.dy / METERS_PER_DEGREE_LAT,
+        );
         const data = {
-          start: {
-            longitude:
-              followState.startPoint!.x / METERS_PER_DEGREE_LON(origin.lat) +
+          pos: [
+            followState.startPoint!.x / METERS_PER_DEGREE_LON(origin.lat) +
               origin.lon,
-            latitude:
-              followState.startPoint!.y / METERS_PER_DEGREE_LAT + origin.lat,
-          },
-          direction:
-            followState.fixedHeading && followState.currentMousePoint
-              ? {
-                  dx:
-                    (followState.currentMousePoint.x -
-                      followState.startPoint!.x) /
-                    METERS_PER_DEGREE_LON(origin.lat),
-                  dy:
-                    (followState.currentMousePoint.y -
-                      followState.startPoint!.y) /
-                    METERS_PER_DEGREE_LAT,
-                }
-              : {
-                  dx: direction.dx / METERS_PER_DEGREE_LON(origin.lat),
-                  dy: direction.dy / METERS_PER_DEGREE_LAT,
-                },
-          height: followState.followHeight,
-          fixedHeading: followState.fixedHeading,
+            followState.startPoint!.y / METERS_PER_DEGREE_LAT + origin.lat,
+            followState.followHeight,
+          ],
+          yaw,
+          fix_yaw: followState.fixedHeading,
+          vel: followState.followSpeed,
         };
         httpRequest("POST", followSubmitUrl, data);
       }, FOLLOW_INTERVAL_MS);
@@ -934,7 +925,7 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
   }, []);
 
   const clearWaypoints = useCallback(() => {
-    setIsEditing(true)
+    setIsEditing(true);
     pushToHistory([]);
     setWaypoints([]);
   }, [pushToHistory]);
@@ -1092,11 +1083,27 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
               <div className="follow-row">
                 <span>跟随高度</span>
                 <InputNumber
+                  mode="spinner"
                   value={followState.followHeight}
                   onChange={(val) =>
                     setFollowState((prev) => ({
                       ...prev,
                       followHeight: val || 0,
+                    }))
+                  }
+                  min={0}
+                  step={1}
+                />
+              </div>
+              <div className="follow-row">
+                <span>跟随速度</span>
+                <InputNumber
+                  mode="spinner"
+                  value={followState.followSpeed}
+                  onChange={(val) =>
+                    setFollowState((prev) => ({
+                      ...prev,
+                      followSpeed: val || 0,
                     }))
                   }
                   min={0}

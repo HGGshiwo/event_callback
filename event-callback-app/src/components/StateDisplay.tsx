@@ -22,7 +22,7 @@ const DisplayItem = ({ itemKey, cfg }: { cfg: StateItemConfig; itemKey: string }
         {cfg.name}
       </div>
       <div className="text-base sm:text-lg font-bold text-gray-800 break-all">
-        {value as string}
+        {String(value)}
       </div>
     </div>
   );
