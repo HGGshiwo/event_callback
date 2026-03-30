@@ -767,10 +767,9 @@ const WaypointEditor: React.FC<WaypointEditorProps> = ({
               dy: followState.currentMousePoint.y - followState.startPoint!.y,
             }
           : { dx: 0, dy: 0 };
-        const yaw = Math.atan2(
-          -direction.dx / METERS_PER_DEGREE_LON(origin.lat),
-          -direction.dy / METERS_PER_DEGREE_LAT,
-        );
+        const deltaLon = direction.dx / METERS_PER_DEGREE_LON(origin.lat); // 经度差（度）
+        const deltaLat = direction.dy / METERS_PER_DEGREE_LAT;             // 纬度差（度）
+        const yaw = Math.atan2(deltaLon, deltaLat);                          // 弧度，范围 -π..π
         const data = {
           pos: [
             followState.startPoint!.x / METERS_PER_DEGREE_LON(origin.lat) +
