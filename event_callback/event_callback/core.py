@@ -1,203 +1,89 @@
-import functools
+import inspect
 import logging
-from abc import ABC
-from dataclasses import dataclass, field
-from types import MethodType
-from typing import Any, Callable, ClassVar, Dict, Final, List, Optional, Type, TypeVar
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, TypeVar
 
-from event_callback.types import CallbackItem, Decorator
-from event_callback.utils import get_classname, throttle
-
-# 初始化logger
 logger = logging.getLogger(__name__)
 
-
-class Registery:
-    """
-    全局组件注册器：提供组件注册接口、动态生成装饰器(R.http/R.ros)、实例回调批量注册
-    单例设计，全局唯一组件注册入口，支持编辑器实时类型推导
-    """
-
-    # 单例实例
-    _instance: ClassVar[Any] = None
-    # 装饰器注册表：manager_name -> compnent_name -> (callback, ...args)
-    _callback_map: Final[Dict[str, Dict[str, List[CallbackItem]]]] = {}
-    # 组件注册表: classname -> comp_class
-    _component_map: Dict[str, Type["BaseComponent"]] = {}
-    # 前端组件配置表 ui_type -> ui_id
-    _config_store = {}
-
-    def __new__(cls):
-        """单例模式：保证全局只有一个R实例"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def _create_comp_decorator(
-        self,
-        comp_cls: Type["BaseComponent"],
-        register_cb: Callable,
-        frequency: Optional[float] = None,
-    ) -> Decorator:
-        """为指定组件生成装饰器，记录函数及装饰器参数到临时注册表"""
-        comp_name = get_classname(comp_cls, False)
-        if comp_name not in self._component_map:
-            self._component_map[comp_name] = comp_cls
-
-        def wrapper(func: Callable) -> Callable:
-            class_name = get_classname(func, True)
-            comp_map = self._callback_map.get(class_name, {})
-            callback_list = comp_map.get(comp_name, [])
-            if frequency is not None:
-                func = throttle(frequency=frequency)(func)
-            # func是回调函数, 绑定到CallbackManager, register_cb是注册方法，绑定到component
-            callback_list.append((func, register_cb))
-            comp_map[comp_name] = callback_list
-            self._callback_map[class_name] = comp_map
-            return func
-
-        return wrapper
+# 定义泛型，用于保持被装饰函数的方法签名不丢失
+F = TypeVar("F", bound=Callable[..., Any])
 
 
-# 全局唯一R实例：外部所有操作均通过该实例进行
-R: Registery = Registery()
+class BaseEvent:
+    """事件描述符基类：负责把装饰器的参数变成元数据，贴到 Manager 的方法上"""
 
-T = TypeVar("T")
+    def __set_name__(self, owner, name):
+        # Python 魔法：自动获取自己被赋给的变量名 (例如 'on_request')
+        self.component_cls = owner
+        self.event_name = name
 
+    def _mark_method(self, func: F, **route_params) -> F:
+        """内部工具：给方法打标签"""
+        if not hasattr(func, "__target_events__"):
+            func.__target_events__ = []
 
-class CallbackMeta(type):
-    """自定义元类，控制实例化过程"""
+        # 将 组件类、事件名、以及【装饰器传入的参数】一并存下来
+        func.__target_events__.append(
+            {
+                "comp_cls": self.component_cls,
+                "event_name": self.event_name,
+                "params": route_params,
+            }
+        )
+        return func
 
-    def __call__(cls, *args, **kwargs):
-        if hasattr(cls, "_init_done"):
-            raise ValueError(f"{cls.__name__}只允许被实例化一次")
-        # 在一开始就调用父类的super.__init__去实例化所有大家组件，后面就可以使用ros
-        instance = super().__call__(*args, **kwargs)
-        cls._init_done = True
-        # 绑定到对象并进行实际注册
-        if hasattr(instance, "_bind_and_regiser"):
-            instance._bind_and_regiser()
-        if hasattr(instance, "_post_init"):
-            instance._post_init()  # 注册所有组件之后调用
-        return instance
+    def __call__(self):
+        def decorator(func: F):
+            return self._mark_method(func)
 
-
-class CallbackMixin(metaclass=CallbackMeta):
-    """
-    1. 和Manager共享组件的实例，组件初始化优先级: manager config > mixin config > 没有明确配置参数
-    2. 允许绑定回调函数，回调函数的self指向Mixin
-    """
-
-    def __init__(self, component_config: List["BaseConfig"] = None):
-        component_config = component_config or []
-        self.component_config = {
-            get_classname(config.target, False): (self, config)
-            for config in component_config
-        }
-        self._component_instances: Dict[str, BaseComponent] = {}
-        self._update_component_config()
-
-    def _update_component_config(self) -> None:
-        """查找R中是否有需要被实例化的组件，这些组件的初始化参数默认为None"""
-        classname = get_classname(self, False)
-        for comp_name in R._callback_map.get(classname, {}).keys():
-            if comp_name not in self.component_config:
-                config = BaseConfig()
-                config.target = R._component_map[comp_name]
-                self.component_config[comp_name] = (self, config)
-
-    def get_component_instance(self, comp_cls: Type["T"]) -> T:
-        comp_name = get_classname(comp_cls, False)
-        return self._component_instances.get(comp_name)
-
-    def _bind_and_regiser(self):
-        cls_name = get_classname(self, False)
-        comp_map = R._callback_map.get(cls_name, None)
-        if comp_map is None:
-            return  # 没有注册任何回调
-        for comp_name, callback_list in comp_map.items():
-            comp_instance = self._component_instances.get(comp_name, None)
-            if comp_instance is None:
-                raise ValueError(
-                    f"{comp_name} has not been initialized, cannot register callbacks!"
-                )
-            for cb, register_cb in callback_list:
-                bind_cb = MethodType(cb, self)
-                bind_register_cb = MethodType(register_cb, comp_instance)
-                bind_register_cb(bind_cb)  # 进行注册
-
-    def _post_init(self):
-        """生命周期函数, 在注册完成之后被调用"""
-        pass
+        return decorator
 
 
-class CallbackManager(CallbackMixin):
-    """
-    回调管理器基类：元类驱动，初始化组件实例，触发组件回调注册
-    子类仅需继承 + 在__init__中指定component_config，组件由R全局注册
-    """
+class BaseComponent:
+    def __init__(self):
+        self._routes = []
+        self.worker_pool = ThreadPoolExecutor(max_workers=10)  # 回调执行线程池
 
-    def __init__(
-        self,
-        component_config: List[Any] = None,
-        mixins: Optional[List[CallbackMixin]] = None,
-    ):
-        """
-        初始化所有的组件，建议在子类__init__最开始时就调用
+    def bind_callback(self, event_name: str, params: dict, callback: Callable):
+        # 把路由参数和回调函数存起来
+        self._routes.append((event_name, params, callback))
 
-        :param list component_config: 组件初始化配置 {组件名: {配置参数}, ...} 如 {"ros": {"node_name": "drone"}}
-        :param CallbackMixin mixins: 允许注册组件，但是不实例化组件
-        """
-        super().__init__(component_config)
-        self.mixins = mixins if mixins is not None else []
-        for mixin in self.mixins:
-            mixin._update_component_config()
-        self._init_components()  # 初始化已注册的组件
+    def safe_excute_cb(self, cb, *args, **kwargs):
+        try:
+            cb(*args, **kwargs)
+        except Exception as e:
+            import traceback
 
-    def _init_components(self) -> None:
-        """初始化在或者回调中被使用或者component_config中额外指定的组件实例"""
-        # 检查是否有重复初始化的组件，只检查手动指定的，不检查自动注册的
-        for mixin in self.mixins:
-            for comp_name, comp_cfg in mixin.component_config.items():
-                if comp_name not in self.component_config:
-                    self.component_config[comp_name] = comp_cfg
-                    continue
-                logger.warning(
-                    f"Warning: {get_classname(mixin)} has duplicate component config for {comp_name}"
-                    f"with {get_classname(self.component_config[comp_name][0])}, skip the config"
-                )
+            logger.error(traceback.format_exc())
 
-        for comp_name, comp_cfg in self.component_config.items():
-            # 初始化组件实例并绑定当前manager实例
-            manager_cls, comp_config = comp_cfg
-            comp_instance = BaseComponent.create(comp_config)
-            self._component_instances[comp_name] = comp_instance
-
-        # 所有的manager+mixin共享component
-        for mixin in self.mixins:
-            mixin._component_instances = self._component_instances
+    def trigger(self, event_name: str, match_params: dict, *args, **kwargs):
+        """带参数过滤的触发器, 提交到一个线程池中执行"""
+        for evt, params, cb in self._routes:
+            if evt == event_name:
+                # 路由匹配逻辑：如果装饰器上定义的参数，和当前事件的参数匹配，则执行回调
+                # 例如：装饰器定义了 path="/api"，当前触发也是 path="/api"
+                if all(match_params.get(k) == v for k, v in params.items()):
+                    self.worker_pool.submit(self.safe_excute_cb, cb, *args, **kwargs)
 
 
-@dataclass
-class BaseConfig:
-    target: type = field(init=False)
-    pass
+class BaseManager:
+    def __init__(self, *components: BaseComponent):
+        comp_map = {type(c): c for c in components}
 
-
-class BaseComponent(ABC):
-    """组件抽象基类：所有组件的父类，强制绑定CallbackManager子类实例，提供回调列表获取"""
-
-    def __init__(self, config: BaseConfig):
-        self.config = config  # 组件初始化配置
-
-    @staticmethod
-    def create(config: BaseConfig):
-        return config.target(config)
-
-
-class BaseComponentHelper(ABC):
-    """组件辅助抽象基类"""
-
-    @classmethod
-    def get_component_instance(cls, manager: CallbackManager):
-        return manager.get_component_instance(cls.target)
+        # 扫描 Manager 上的所有方法，提取元数据
+        for _, method in inspect.getmembers(self, inspect.ismethod):
+            target_events = getattr(method, "__target_events__", [])
+            for target in target_events:
+                comp_cls = target["comp_cls"]
+                if comp_cls in comp_map:
+                    # 将方法以及它带的参数，注册到 Component 实例中
+                    comp_map[comp_cls].bind_callback(
+                        event_name=target["event_name"],
+                        params=target["params"],
+                        callback=method,
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Callback {method.__name__} depends on component {comp_cls.__name__}, "
+                        "but that component not found in component list, make sure you pass it to the manager!"
+                    )

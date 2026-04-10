@@ -1,2 +1,2 @@
-from .core import HTTPComponent, HTTPConfig, http
-from .message_handler import MessageHandler, MessageType
+from .core import HTTPComponent
+from .proxy import HTTP_ProxyComponent

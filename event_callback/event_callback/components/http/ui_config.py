@@ -2,7 +2,6 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 
-from event_callback.core import R
 from event_callback.utils import get_classname
 
 T = TypeVar("T")
@@ -69,6 +68,9 @@ class ToDictMixin:
         return obj
 
 
+config_store = {}
+
+
 @dataclass
 class BaseUIConfig(ToDictMixin):
     """所有组件配置的基类，提供通用序列化和更新能力"""
@@ -84,11 +86,11 @@ class BaseUIConfig(ToDictMixin):
         if self.config_id is None:
             self.config_id = self.generate_id()
 
-        config_map = R._config_store.get(self.config_type, {})
+        config_map = config_store.get(self.config_type, {})
         if self.config_id in config_map:
             raise ValueError(f"{self.config_type}组件中已存在ID：{self.config_id}")
         config_map[self.config_id] = self
-        R._config_store[self.config_type] = config_map
+        config_store[self.config_type] = config_map
 
     @classmethod
     def generate_id(cls):
@@ -104,7 +106,7 @@ class BaseUIConfig(ToDictMixin):
         """
 
         json_data = {}
-        for component_type, configs in R._config_store.items():
+        for component_type, configs in config_store.items():
             json_data[component_type] = {
                 config_id: ToDictMixin.serialize(config)
                 for config_id, config in configs.items()

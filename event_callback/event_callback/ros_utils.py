@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Callable, Optional, Type
 
@@ -166,3 +167,26 @@ class ROSProxy:
             pass
         # 普通属性/不存在的属性，调用父类方法设置，避免递归
         object.__setattr__(self, name, value)
+
+
+def create_wsproxy():
+    class WSProxy:
+        def __init__(self):
+            from std_msgs.msg import String
+
+            self.pub = rospy.Publisher("/mavproxy/ws", String, queue_size=1)
+
+        def _send(self, data: dict):
+            self.pub.publish(json.dumps(data))
+
+        def info(self, data: dict):
+            self._send(dict(info=data, type="info"))
+
+        def error(self, data: dict):
+            self._send(dict(error=data, type="error"))
+
+        def state(self, data: dict):
+            data["type"] = "state"
+            self._send(data)
+
+    return WSProxy()

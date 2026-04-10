@@ -72,94 +72,6 @@ def get_classname(obj: Any, is_method: bool) -> str:
         return None
 
 
-class EnumMeta(type):
-    """自定义枚举元类，实现可继承的枚举核心逻辑"""
-
-    def __new__(cls, name, bases, attrs):
-        # 收集所有枚举成员（排除特殊方法/属性，如__module__、__doc__等）
-        enum_members = {}
-        # 先合并父类的枚举成员（实现继承）
-        for base in bases:
-            if hasattr(base, "_members"):
-                enum_members.update(base._members)
-
-        # 收集当前类的枚举成员，去重（子类成员覆盖父类同名成员）
-        for attr_name, attr_value in attrs.items():
-            # 排除以下划线开头的特殊属性/方法
-            if not attr_name.startswith("_"):
-                # 检查值是否重复（保证枚举值唯一性）
-                if attr_value in enum_members.values():
-                    raise ValueError(f"枚举值 {attr_value} 已存在，无法重复定义")
-                enum_members[attr_name] = attr_value
-
-        # 创建枚举类实例
-        enum_class = super().__new__(cls, name, bases, attrs)
-        # 存储所有枚举成员（名称->值）
-        enum_class._members = enum_members
-        # 反向映射（值->名称），用于通过值查找成员
-        enum_class._value_to_name = {v: k for k, v in enum_members.items()}
-
-        # 为枚举类动态添加成员属性（不可变）
-        for member_name, member_value in enum_members.items():
-            # 封装枚举成员为实例，包含name和value属性
-            member = enum_class._create_member(member_name, member_value)
-            setattr(enum_class, member_name, member)
-
-        return enum_class
-
-    @staticmethod
-    def _create_member(name, value):
-        """创建枚举成员实例，保证不可变"""
-
-        class EnumMember:
-            __slots__ = ("name", "value")  # 限制属性，提升性能且不可动态添加属性
-
-            def __init__(self, name, value):
-                super().__setattr__("name", name)
-                super().__setattr__("value", value)
-
-            def __repr__(self):
-                return f"<{self.name}: {self.value}>"
-
-            def __eq__(self, other):
-                if isinstance(other, EnumMember):
-                    return self.value == other.value
-                return self.value == other
-
-            def __hash__(self):
-                return hash(self.value)
-
-            # 阻止修改属性，保证不可变性
-            def __setattr__(self, key, value):
-                if key in self.__slots__:
-                    raise AttributeError("枚举成员属性不可修改")
-                super().__setattr__(key, value)
-
-        return EnumMember(name, value)
-
-
-class BaseEnum(metaclass=EnumMeta):
-    """可继承的基础枚举类，封装核心访问方法"""
-
-    _members = {}  # 存储：名称 -> 值
-    _value_to_name = {}  # 存储：值 -> 名称
-
-    @classmethod
-    def __call__(cls, value):
-        """模拟原生Enum：通过值获取成员（如 Color(1)）"""
-        member = cls.get(value)
-        if not member:
-            raise ValueError(f"{value} 不是 {cls.__name__} 的有效枚举值")
-        return member
-
-    @classmethod
-    def __getitem__(cls, name):
-        """通过名称获取成员（如 Color['RED']）"""
-        if name not in cls._members:
-            raise KeyError(f"{name} 不是 {cls.__name__} 的有效枚举名称")
-        return getattr(cls, name)
-
-
 class classproperty:
     """自定义描述符类，实现 classmethod + property 的效果"""
 
@@ -172,56 +84,86 @@ class classproperty:
         return self.func(owner)  # 调用函数时传入类对象
 
 
-def throttle(
-    frequency: float, max_calls: int = float("inf")
-) -> Callable[[Callable], Callable]:
+import weakref
+
+
+def throttle(frequency: float, max_calls: int = float("inf")):
     """
-    创建一个节流装饰器，限制函数的调用频率和最大调用次数
-
-    Args:
-        frequency: 调用频率，例如 2.0 表示每秒最多调用 2 次
-        max_calls: 最大调用次数，默认无限制
-
-    Returns:
-        装饰器函数
+    外层函数：只负责接收节流参数
     """
 
-    def decorator(func: Callable) -> Callable:
-        # 初始化节流控制变量
-        last_called = 0.0  # 上一次调用的时间戳
-        call_count = 0  # 已调用次数
+    class ThrottleWrapper:
+        """
+        内层类：负责真正的装饰、描述符逻辑和状态管理
+        """
 
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            nonlocal last_called, call_count
+        def __init__(self, func: Callable):
+            self.func = func
+            self.frequency = frequency
+            self.max_calls = max_calls
 
-            # 检查是否达到最大调用次数
-            if call_count >= max_calls:
+            # 用于成员方法的实例隔离状态
+            self.instance_states = weakref.WeakKeyDictionary()
+            # 用于普通函数的全局状态
+            self.func_state = {"last_called": 0.0, "call_count": 0}
+
+            functools.update_wrapper(self, func)
+
+        def _get_state(self, instance: Any) -> dict:
+            if instance is None:
+                return self.func_state
+            if instance not in self.instance_states:
+                self.instance_states[instance] = {"last_called": 0.0, "call_count": 0}
+            return self.instance_states[instance]
+
+        def _execute(self, instance: Any, *args, **kwargs) -> Any:
+            """统一的节流执行逻辑"""
+            state = self._get_state(instance)
+
+            if state["call_count"] >= self.max_calls:
                 return None
-
-            # 获取当前时间
             current_time = time.time()
+            if current_time - state["last_called"] >= 1 / self.frequency:
+                result = self.func(*args, **kwargs)
+                state["last_called"] = current_time
+                state["call_count"] += 1
+                return result
+            return None
 
-            # 检查时间间隔是否满足节流要求
-            if current_time - last_called >= 1 / frequency:
-                try:
-                    # 执行目标函数并记录结果
-                    result = func(*args, **kwargs)
-                    # 更新调用时间和计数
-                    last_called = current_time
-                    call_count += 1
-                    return result
-                except Exception as e:
-                    # 保留原函数的异常
-                    raise e
+        def __call__(self, *args, **kwargs) -> Any:
+            """
+            当装饰的是普通函数时，调用会触发这里。
+            注意：这里的 __call__ 只负责执行业务逻辑，不再负责接收 func！
+            """
+            return self._execute(None, *args, **kwargs)
 
-        # 暴露内部状态，方便调试
-        wrapper.last_called = lambda: last_called
-        wrapper.call_count = lambda: call_count
+        def __get__(self, instance: Any, owner: Any) -> Callable:
+            """
+            当装饰的是类成员方法时，通过 obj.method 访问会触发这里。
+            """
+            if instance is None:
+                return self
 
-        return wrapper
+            @functools.wraps(self.func)
+            def bound_wrapper(*args, **kwargs):
+                # 将 instance 传入，实现状态隔离，同时自动填补 self 参数
+                return self._execute(instance, instance, *args, **kwargs)
 
-    return decorator
+            # 完美解决属性丢失问题：将状态暴露给绑定的方法
+            bound_wrapper.last_called = lambda: self._get_state(instance)["last_called"]
+            bound_wrapper.call_count = lambda: self._get_state(instance)["call_count"]
+
+            return bound_wrapper
+
+        # 为普通函数暴露状态
+        def last_called(self):
+            return self.func_state["last_called"]
+
+        def call_count(self):
+            return self.func_state["call_count"]
+
+    # 返回这个类本身，@throttle()() 语法会自动实例化它并传入被装饰的函数
+    return ThrottleWrapper
 
 
 def setup_logger(
