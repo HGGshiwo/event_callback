@@ -114,7 +114,7 @@ class HTTP_ProxyComponent(BaseComponent):
         except Exception as e:
             # 构造异常响应，包含错误信息和堆栈详情
             response = dict(
-                states="error",
+                status="error",
                 msg=str(e),
                 detail=traceback.format_exc(),
             )
