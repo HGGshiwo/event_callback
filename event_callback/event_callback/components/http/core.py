@@ -30,6 +30,7 @@ from .utils import dict2route, request2dict
 try:
     import rospy
     from event_callback_msg.srv import StringSrv, StringSrvResponse
+    from std_msgs.msg import String
 except:
     String: TypeAlias = Any
     Empty: TypeAlias = Any
@@ -77,12 +78,18 @@ class RequestHandler:
 
     async def __call__(self, request: Request):
         """解析FastAPI请求（路径/查询/体参数），调用ROS服务并返回JSON响应"""
-        request_json = await request2dict(request)
-        loop = asyncio.get_event_loop()
-        ros_resp = await loop.run_in_executor(
-            None, lambda: self.ros_srv_proxy(request=json.dumps(request_json))
-        )
-        return json.loads(ros_resp.response)
+        # 异常捕获，放置调用服务失败导致500
+        try:
+            request_json = await request2dict(request)
+            loop = asyncio.get_event_loop()
+            ros_resp = await loop.run_in_executor(
+                None, lambda: self.ros_srv_proxy(request=json.dumps(request_json))
+            )
+            return json.loads(ros_resp.response)
+        except Exception as e:
+            import traceback
+
+            return dict(detail=traceback.format_exc(), status="error", msg=str(e))
 
 
 class POSTEvent(BaseEvent):
@@ -185,6 +192,16 @@ class HTTPComponent(BaseComponent):
             self.ros_srv = rospy.Service(
                 "register", StringSrv, self._ros_register_callback
             )
+            ready_pub = rospy.Publisher("ready", String, queue_size=1, latch=True)
+            # 服务准备好后发布
+            ready_pub.publish("ready")
+
+            rospy.on_shutdown(self._close)
+
+    def _close(self):
+        if self.enable_register and hasattr(self, "ros_srv"):
+            self.ros_srv.shutdown()
+            rospy.loginfo("register服务关闭")
 
     def _init_fastapi_middleware(self) -> None:
         """初始化FastAPI中间件：CORS跨域、日志过滤"""

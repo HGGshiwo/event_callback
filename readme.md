@@ -4,3 +4,9 @@
 2. 成员方法作为回调函数在R中注册，自动识别成员方法对应的管理类以及组件
 3. 当管理类初始化的时候，从R中读取回调函数并初始化所需要的组件
 
+# TEST
+
+```
+pip install pytest-forked
+pytest -s --forked -m mark(http, tcp, ...)
+```

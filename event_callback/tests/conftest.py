@@ -1,12 +1,17 @@
+import subprocess
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 import rospy
 import std_msgs
+from mavproxy_ros.node import SUCCESS_RESPONSE
 from mavproxy_ros.utils import wait_for_debugger
+from std_srvs.srv import Trigger
 
 from event_callback.components.http.core import HTTPComponent
+from event_callback.components.http.proxy import HTTP_ProxyComponent
 from event_callback.components.ros import ROSComponent
 from event_callback.components.socket.tcp import TCPComponent
 from event_callback.components.socket.udp import UDPComponent
@@ -26,8 +31,9 @@ class TestManager(BaseManager):
         http_node: HTTPComponent,
         ros_node: ROSComponent,
         udp_node: UDPComponent,
+        http_proxy_node: HTTP_ProxyComponent,
     ):
-        super().__init__(tcp_node, http_node, ros_node, udp_node)
+        super().__init__(tcp_node, http_node, ros_node, udp_node, http_proxy_node)
         tcp_node.start_server(host="127.0.0.1", port=0)
         udp_node.start_server(host="127.0.0.1", port=0)
         http_node.start_server(host="0.0.0.0", port=0)
@@ -66,11 +72,39 @@ class TestManager(BaseManager):
         if data == b"ping":
             self.tcp_node.send(conn_id, b"pong")
 
+    @HTTPComponent.on_get("/forever")
+    async def on_get_forever(self):
+        """测试一个阻塞时间很长的接口"""
+        start = time.time()
+        while True:
+            _ = 100 * 100
+            if time.time() - start >= 10:
+                break
+        return "SUCCESS"
+
+    @HTTP_ProxyComponent.on_get("/stop_record")
+    async def on_stop_record(self):
+        service_name = "/no_such_service"
+        rospy.loginfo("开始模拟wait for等待")
+        rospy.wait_for_service(service_name, timeout=10)
+        print("wait for等待模拟完成")
+        srv = rospy.ServiceProxy(service_name, Trigger)
+        res = srv()
+        return "SUCCESS"
+
+    @HTTP_ProxyComponent.on_get("/proxy/forever")
+    async def on_get_proxy_forever(self):
+        return await self.on_get_forever()
+
     @HTTPComponent.on_get("/test1")
-    def on_http(self):
+    async def on_get_test1(self):
         with self.lock:
             self.stats["http_req_count"] += 1
         return "SUCCESS"
+
+    @HTTP_ProxyComponent.on_get("/proxy/test1")
+    async def on_get_proxy_test1(self):
+        return await self.on_get_test1()
 
     @ROSComponent.on_topic("/test", std_msgs.msg.String, 1)
     def on_topic(self, data):
@@ -79,53 +113,62 @@ class TestManager(BaseManager):
                 self.stats["ros_msg_count"] += 1
 
 
+@contextmanager
+def ros_env():
+    roscore_process = subprocess.Popen(["roscore"])
+    time.sleep(2)  # 等待完全启动
+    rospy.init_node("test")
+
+    try:
+        yield
+    finally:
+        # 停止 ROS Master
+        roscore_process.terminate()
+        roscore_process.wait()  # 阻塞，直到进程完全死掉，这样100%保证端口释放
+        print("停止 ROS Master")
+
+
 # --- 2. 工业级环境夹具 (Fixtures) ---
 # scope="function" 意味着每个 test_xxx 函数运行前都会初始化一套全新的环境
 @pytest.fixture(scope="function")
 def test_env(request):
     """自动化生命周期管理，提供隔离的测试环境"""
-    # 强制端口为0，让操作系统分配，杜绝端口冲突
-    tcp_comp = TCPComponent(router=lambda x: "/test_tcp")
-    http_comp = HTTPComponent()
-    udp_comp = UDPComponent(router=lambda x: "/test_udp")
-    ros_comp = ROSComponent()
-    manager = TestManager(tcp_comp, http_comp, ros_comp, udp_comp)
 
-    # 通过 yield 把环境交给具体的测试用例使用
-    record = []
+    with ros_env():
+        # 强制端口为0，让操作系统分配，杜绝端口冲突
+        tcp_comp = TCPComponent(router=lambda x: "/test_tcp")
+        http_comp = HTTPComponent(register=True)
+        rospy.wait_for_service("register", 10)
 
-    for i in range(100):
-        if hasattr(http_comp.server, "servers"):
-            break
-        time.sleep(0.1)
-    else:
-        assert 0 == 1, "timeout!"
-    yield {
-        "manager": manager,
-        "tcp_port": tcp_comp.server_socket.getsockname()[1],
-        "udp_port": udp_comp._socket.getsockname()[1],
-        "http_port": http_comp.server.servers[0].sockets[0].getsockname()[1],
-        "ros_topic": "/test",
-        "record": record,
-    }
-    if not hasattr(request.session, "record"):
-        request.session.record = []
-    request.session.record += record
+        udp_comp = UDPComponent(router=lambda x: "/test_udp")
+        ros_comp = ROSComponent()
+        http_proxy_comp = HTTP_ProxyComponent()
+        manager = TestManager(tcp_comp, http_comp, ros_comp, udp_comp, http_proxy_comp)
 
+        # 通过 yield 把环境交给具体的测试用例使用
+        record = []
 
-@pytest.fixture(scope="session", autouse=True)
-def global_setup():
-    """所有测试开始前执行一次，结束后执行一次"""
-    # wait_for_debugger()
-    from rosmaster.master import Master
+        for i in range(100):
+            if hasattr(http_comp.server, "servers"):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("timeout!")
+        yield {
+            "manager": manager,
+            "tcp_port": tcp_comp.server_socket.getsockname()[1],
+            "udp_port": udp_comp._socket.getsockname()[1],
+            "http_port": http_comp.server.servers[0].sockets[0].getsockname()[1],
+            "ros_topic": "/test",
+            "record": record,
+        }
 
-    master = Master()
-    master.start()
-    rospy.init_node("test")
-    print("start master")
-
-    yield  # 此处分隔启动和清理代码
-    master.stop()
+        if not hasattr(request.session, "record"):
+            request.session.record = []
+        request.session.record += record
+        del ros_comp
+        del http_proxy_comp
+        del udp_comp
 
 
 def pytest_sessionfinish(session, exitstatus):

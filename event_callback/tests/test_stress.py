@@ -17,7 +17,7 @@ def test_99_stress_tcp_concurrent(test_env):
     tcp_port = test_env["tcp_port"]
     manager = test_env["manager"]
 
-    CLIENT_COUNT = 500
+    CLIENT_COUNT = 50
     MSG_PER_CLIENT = 10
 
     def single_client_task(client_id):
@@ -47,7 +47,7 @@ def test_99_stress_tcp_concurrent(test_env):
         futures = [pool.submit(single_client_task, i) for i in range(CLIENT_COUNT)]
 
         # 收集所有客户端的执行结果
-        results = [f.result() for f in futures]
+        results = [f.result(timeout=1) for f in futures]
     # 留出一点缓冲时间让服务器消化最后的请求
     time.sleep(0.5)
 

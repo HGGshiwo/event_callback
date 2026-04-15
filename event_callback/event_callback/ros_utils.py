@@ -160,7 +160,11 @@ class ROSProxy:
             attr = object.__getattribute__(self, name)
             # 如果是参数字段，调用set方法
             if isinstance(attr, rosparam_field):
-                attr.set(value)
+                if isinstance(value, rosparam_field):
+                    # 如果value也是一个rosparma_field，则进行覆盖
+                    object.__setattr__(self, name, value)
+                else:
+                    attr.set(value)
                 return
         except AttributeError:
             # 属性不存在，直接设置

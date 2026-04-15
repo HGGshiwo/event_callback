@@ -9,6 +9,8 @@ from functools import partial
 from threading import Thread
 from typing import Any, Callable
 
+from std_msgs.msg import String
+
 from event_callback.components.http.core import GETEvent, MessageEvent, POSTEvent
 from event_callback.core import BaseEvent
 
@@ -48,27 +50,34 @@ class HTTP_ProxyComponent(BaseComponent):
 
     def __init__(self):
         super().__init__()
-
-        # self._init_ros_node()
-        self._receive_register = False  # 是否收到了register请求，收到需要注册
-        self._init_ros_srv_config()  # 初始化ROS服务相关配置
         self._callbacks = None  # 记录下需要注册的路由
         self._excutor = ThreadPoolExecutor(thread_name_prefix="http_ros_proxy_")
         self._event_loop = None
         self._thread = Thread(target=lambda: asyncio.run(self._run()), daemon=True)
         self._thread.start()
+        self.ready_sub = rospy.Subscriber(
+            "ready", String, callback=self._init_ros_srv_config
+        )
 
     async def _run(self):
         self._event_loop = asyncio.get_event_loop()
         while not rospy_is_shutdown():
             await asyncio.sleep(0.001)
 
-    def _init_ros_srv_config(self) -> None:
+    def _init_ros_srv_config(self, data) -> None:
         """初始化ROS服务配置：等待注册服务、创建服务代理"""
         # 等待register服务上线（超时会自动抛出异常，符合ROS服务调用规范）
-        rospy.wait_for_service("register", timeout=5)
+        rospy.wait_for_service("register", timeout=100)
+        rospy.loginfo("reigster is OK")
         # 创建register服务代理，用于Http-ROS服务映射注册
         self.register_srv = rospy.ServiceProxy("register", StringSrv)
+        for event_name, params, callback in self._routes:
+            if event_name in ["on_post", "on_get"]:
+                url = params["url"]
+                method = params["method"]
+                self._register_ros_services(callback, url, method)
+            else:
+                raise ValueError(f"Not support {event_name}")
 
     def _async_run(self, func: Callable):
         """将一个异步函数包装为同步函数"""
@@ -147,14 +156,6 @@ class HTTP_ProxyComponent(BaseComponent):
         reg_res = self.register_srv(json.dumps(route_data))
         if json.loads(reg_res.response)["status"] != "success":
             raise ValueError(f"ROS HTTP mapping failed: {path} -> {srv_name}")
-
-    def bind_callback(self, event_name, params, callback):
-        if event_name in ["on_post", "on_get"]:
-            url = params["url"]
-            method = params["method"]
-            self._register_ros_services(callback, url, method)
-        else:
-            raise ValueError(f"Not support {event_name}")
 
     def publish(self, data):
         raise NotImplementedError()
