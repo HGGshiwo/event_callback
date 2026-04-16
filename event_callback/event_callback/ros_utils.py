@@ -110,8 +110,7 @@ class rostopic_field:
         # 差值 >= 超时时间 → 超时
         return time_diff >= self._timeout
 
-    @property
-    def value(self):
+    def __get__(self, instance, owner):
         """获取处理后的话题值（含超时检查+格式化）"""
         if self._msg is None:
             return None
@@ -123,54 +122,22 @@ class rostopic_field:
         return self._msg
 
 
-class rosparam_field:  # 修正拼写错误：filed → field
-    """ROS参数操作类（get/set）"""
+class rosparam_field:
+    """ROS参数操作类（get/set），注意网络开销，尽量减少直接读取和赋值！"""
 
     def __init__(self, param_name: str, default: Optional[Any] = None):
         self._param_name = param_name
         self._default = default
 
-    def get(self):
+    def __get__(self, instance, owner):
         """获取参数值，不存在返回None"""
+        if instance is None:
+            return self
         return rospy.get_param(self._param_name, self._default)
 
-    def set(self, value: Any):
+    def __set__(self, instance, value):
         """设置参数值"""
         rospy.set_param(self._param_name, value)
-
-
-class ROSProxy:
-    """ROS话题/参数代理类，简化属性访问"""
-
-    def __getattribute__(self, name: str):
-        # 调用父类方法安全获取属性，避免递归
-        attr = super().__getattribute__(name)
-        # 如果是话题字段，返回其处理后的值
-        if isinstance(attr, rostopic_field):
-            return attr.value
-        # 如果是参数字段，返回其值
-        if isinstance(attr, rosparam_field):
-            return attr.get()
-        # 普通属性直接返回
-        return attr
-
-    def __setattr__(self, name: str, value: Any):
-        try:
-            # 安全获取已存在的属性（避免触发__getattribute__的递归）
-            attr = object.__getattribute__(self, name)
-            # 如果是参数字段，调用set方法
-            if isinstance(attr, rosparam_field):
-                if isinstance(value, rosparam_field):
-                    # 如果value也是一个rosparma_field，则进行覆盖
-                    object.__setattr__(self, name, value)
-                else:
-                    attr.set(value)
-                return
-        except AttributeError:
-            # 属性不存在，直接设置
-            pass
-        # 普通属性/不存在的属性，调用父类方法设置，避免递归
-        object.__setattr__(self, name, value)
 
 
 def create_wsproxy():

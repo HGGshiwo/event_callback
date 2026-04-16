@@ -94,29 +94,20 @@ class RequestHandler:
 
 class POSTEvent(BaseEvent):
     def __call__(self, url: str):
-        def decorator(func: Callable):
-            return self._mark_method(func=func, url=url, method="POST")
-
-        return decorator
+        return super().__call__(url=url, method="POST")
 
 
 class GETEvent(BaseEvent):
     def __call__(self, url: str):
-        def decorator(func: Callable):
-            return self._mark_method(func=func, url=url, method="GET")
-
-        return decorator
+        return super().__call__(url=url, method="GET")
 
 
 class MessageEvent(BaseEvent):
     def __call__(self, route: str = None):
-        def decorator(func: Callable):
-            kwargs = {}
-            if route is not None:
-                kwargs["route"] = route
-            return self._mark_method(func=func, **kwargs)
-
-        return decorator
+        kwargs = {}
+        if route is not None:
+            kwargs["route"] = route
+        return super().__call__(**kwargs)
 
 
 class HTTPComponent(BaseComponent):
@@ -360,7 +351,8 @@ class HTTPComponent(BaseComponent):
                 try:
                     ws = self.ws_connections[conn_id]
                     await ws.send_json(data)
-                except Exception:
+                except Exception as e:
+                    logger.error(f"WS Client error: {conn_id}: {e}")
                     del self.ws_connections[conn_id]
 
         asyncio.run_coroutine_threadsafe(worker(), self.loop)

@@ -143,17 +143,40 @@ def throttle(frequency: float, max_calls: int = float("inf")):
             """
             if instance is None:
                 return self
+            throttle_self = self  # 捕获外层的 ThrottleWrapper 实例
 
-            @functools.wraps(self.func)
-            def bound_wrapper(*args, **kwargs):
-                # 将 instance 传入，实现状态隔离，同时自动填补 self 参数
-                return self._execute(instance, instance, *args, **kwargs)
+            class BoundMethod:
+                """
+                这是一个动态代理类，充当绑定方法。
+                它会将所有对它的未知属性访问，统统转发给外层的 throttle_self 或原函数。
+                """
 
-            # 完美解决属性丢失问题：将状态暴露给绑定的方法
-            bound_wrapper.last_called = lambda: self._get_state(instance)["last_called"]
-            bound_wrapper.call_count = lambda: self._get_state(instance)["call_count"]
+                def __init__(self):
+                    # 复制 __name__, __doc__ 等基本内置属性，让它看起来像真实的方法
+                    # 这样打印日志或其它依赖内置属性的操作不会报错
+                    functools.update_wrapper(self, throttle_self.func)
 
-            return bound_wrapper
+                def __call__(inner_self, *args, **kwargs):
+                    # 代理执行逻辑：传入 instance 填补 self，实现状态隔离
+                    return throttle_self._execute(instance, instance, *args, **kwargs)
+
+                def __getattr__(inner_self, name):
+                    """
+                    核心魔法：任何在此实例上找不到的属性，都会触发这里。
+                    我们将请求直接转发给外层的 ThrottleWrapper，
+                    (因为 ThrottleWrapper 已经通过 update_wrapper 继承了被装饰函数的所有属性)
+                    """
+                    return getattr(throttle_self, name)
+
+                # 将节流状态作为动态方法挂载
+                def last_called(inner_self):
+                    return throttle_self._get_state(instance)["last_called"]
+
+                def call_count(inner_self):
+                    return throttle_self._get_state(instance)["call_count"]
+
+            # 每次 obj.method 访问，返回一个绑定了该 obj 的代理实例
+            return BoundMethod()
 
         # 为普通函数暴露状态
         def last_called(self):

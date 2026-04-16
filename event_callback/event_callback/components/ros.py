@@ -10,16 +10,9 @@ class ROSTopicEvent(BaseEvent):
         topic_type: Type,
         queue_size: Optional[int] = None,
     ):
-        def decorator(func: F) -> F:
-            # 拿到用户在装饰器填的参数，存入元数据
-            return self._mark_method(
-                func,
-                topic_name=topic_name,
-                topic_type=topic_type,
-                queue_size=queue_size,
-            )
-
-        return decorator
+        return super().__call__(
+            topic_name=topic_name, topic_type=topic_type, queue_size=queue_size
+        )
 
 
 class ROSComponent(BaseComponent):

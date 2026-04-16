@@ -6,7 +6,6 @@ from contextlib import contextmanager
 import pytest
 import rospy
 import std_msgs
-from mavproxy_ros.node import SUCCESS_RESPONSE
 from mavproxy_ros.utils import wait_for_debugger
 from std_srvs.srv import Trigger
 

@@ -47,6 +47,7 @@ class HTTP_ProxyComponent(BaseComponent):
     on_connect = BaseEvent()
     on_disconnect = BaseEvent()
     on_message = MessageEvent()
+    on_ready = BaseEvent()  # http服务器已经就绪
 
     def __init__(self):
         super().__init__()
@@ -55,6 +56,9 @@ class HTTP_ProxyComponent(BaseComponent):
         self._event_loop = None
         self._thread = Thread(target=lambda: asyncio.run(self._run()), daemon=True)
         self._thread.start()
+
+    def bind_done(self):
+        # 必须在bind完成后订阅，触发注册，不然_route是空的
         self.ready_sub = rospy.Subscriber(
             "ready", String, callback=self._init_ros_srv_config
         )
@@ -77,7 +81,8 @@ class HTTP_ProxyComponent(BaseComponent):
                 method = params["method"]
                 self._register_ros_services(callback, url, method)
             else:
-                raise ValueError(f"Not support {event_name}")
+                pass  # 不是http的回调
+        self.trigger("on_ready", {})
 
     def _async_run(self, func: Callable):
         """将一个异步函数包装为同步函数"""
