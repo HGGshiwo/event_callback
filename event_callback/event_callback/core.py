@@ -1,6 +1,8 @@
 import copy
+import functools
 import inspect
 import logging
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import wraps
 from typing import Any, Callable, List, TypeVar
@@ -57,10 +59,29 @@ class BaseEvent:
         return decorator
 
 
+def create_wrapper(original_cb):
+    """
+    制造一个工厂函数，完美避开 Python 循环闭包的晚绑定陷阱
+    """
+
+    @functools.wraps(original_cb)
+    def wrapper(*w_args, **w_kwargs):
+        try:
+            # 1. 正常执行用户的回调（内部可能有耗时计算、触发新任务、rospy.pub等）
+            return original_cb(*w_args, **w_kwargs)
+        finally:
+            # 2. 核心魔法：使用 finally 确保即使回调抛出异常，依然会让出 GIL
+            # 只要回调执行完毕（代表 publish 已经塞入了数据），
+            # 立刻强制交出执行权，给 rospy 留出 2~5 毫秒把数据发往网卡！
+            time.sleep(0.005)
+
+    return wrapper
+
+
 class BaseComponent:
     def __init__(self):
         self._routes = []
-        self.worker_pool = ThreadPoolExecutor(max_workers=10)  # 回调执行线程池
+        self.worker_pool = ThreadPoolExecutor()  # 回调执行线程池
 
     def bind_callback(self, event_name: str, params: dict, callback: Callable):
         # 把路由参数和回调函数存起来
@@ -82,13 +103,18 @@ class BaseComponent:
     ) -> List[Future]:
         """带参数过滤的触发器, 提交到一个线程池中执行"""
         out = []
+
         for evt, params, cb in self._routes:
             if evt == event_name:
-                # 路由匹配逻辑：如果装饰器上定义的参数，和当前事件的参数匹配，则执行回调
-                # 例如：装饰器定义了 path="/api"，当前触发也是 path="/api"
+                # 路由匹配逻辑
                 if all(match_params.get(k) == v for k, v in params.items()):
-                    future = self.worker_pool.submit(cb, *args, **kwargs)
+                    # 使用工厂函数生成安全的包裹器
+                    safe_cb = create_wrapper(cb)
+
+                    # 提交到线程池
+                    future = self.worker_pool.submit(safe_cb, *args, **kwargs)
                     out.append(future)
+
         return out
 
 

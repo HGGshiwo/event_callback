@@ -1,6 +1,9 @@
+import time
 from typing import Optional, Type
 
-from event_callback.core import BaseComponent, BaseEvent, F
+import rospy
+
+from event_callback.core import BaseComponent, BaseEvent
 
 
 class ROSTopicEvent(BaseEvent):
@@ -22,14 +25,26 @@ class ROSComponent(BaseComponent):
         super().__init__()
         self.sub = []
 
+    @staticmethod
+    def create_publisher(topic_name, topic_type, queue_size=None):
+        pub = rospy.Publisher(topic_name, topic_type, queue_size=queue_size)
+
+        def publish(data):
+            pub.publish(data)
+            time.sleep(0.001)  # 让rospy有机会得到GIL
+
+        return publish
+
     def bind_callback(self, event_name, params, callback):
         assert event_name == "on_topic"
         import rospy
 
+        super().bind_callback(event_name, params, callback)
+
         sub = rospy.Subscriber(
             params["topic_name"],
             params["topic_type"],
-            callback,
+            lambda *args, **kwargs: self.trigger(event_name, params, *args, **kwargs),
             queue_size=params["queue_size"],
         )
         # 引用防止被清理
