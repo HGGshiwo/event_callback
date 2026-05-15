@@ -36,6 +36,8 @@ class TestManager(BaseManager):
         tcp_node.start_server(host="127.0.0.1", port=0)
         udp_node.start_server(host="127.0.0.1", port=0)
         http_node.start_server(host="0.0.0.0", port=0)
+        
+        self.http_node = http_node
         self.tcp_node = tcp_node
         self.udp_node = udp_node
         self.ros_node = ros_node
@@ -48,8 +50,13 @@ class TestManager(BaseManager):
             "udp_msg_count": 0,
             "http_req_count": 0,
             "ros_msg_count": 0,
+            "ready": False,
         }
 
+    @HTTP_ProxyComponent.on_ready()
+    def on_proxy_read(self):
+        self.stats["ready"] = True
+        
     @UDPComponent.on_message("/test_udp")
     def on_udp_msg(self, data, addr):
         if data == b"ping":
@@ -70,7 +77,7 @@ class TestManager(BaseManager):
             self.stats["tcp_msg_count"] += 1
         if data == b"ping":
             self.tcp_node.send(conn_id, b"pong")
-
+    
     @HTTPComponent.on_get("/forever")
     async def on_get_forever(self):
         """测试一个阻塞时间很长的接口"""
@@ -182,3 +189,4 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "stress")
     config.addinivalue_line("markers", "tcp")
     config.addinivalue_line("markers", "udp")
+    config.addinivalue_line("markers", "ws")

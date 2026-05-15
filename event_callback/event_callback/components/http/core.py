@@ -2,10 +2,15 @@ import asyncio
 import copy
 import json
 import logging
+from queue import Queue
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+from event_callback.ros_utils import rospy_is_shutdown
+from mavproxy_ros.utils import wait_for_debugger
 
 try:
     from typing import TypeAlias
@@ -110,6 +115,43 @@ class MessageEvent(BaseEvent):
         return super().__call__(**kwargs)
 
 
+class WebsocketClient:
+    """
+    只有publish的消息支持重发，因为客户端会断联，所以无法区分不同客户端的消息
+    只有所以客户端都需要发的消息可以重发
+    """
+
+    def __init__(self, ws: WebSocket):
+        self.ws = ws
+        self.conn_id = str(uuid.uuid4())
+        self.msg_id = -1  # 当前重试的消息
+        self.lock = asyncio.Lock()
+
+    async def send_event_data(self, data: Dict[str, Any], retry=False):
+        """发送数据并记录重试状态"""
+        send_data = copy.deepcopy(data)  # 深拷贝，防止多个客户端污染同一个字典
+
+        if send_data.get("type", None) == "event" and retry:
+            async with self.lock:
+                if self.msg_id == -1 or self.msg_id > data["msg_id"]:
+                    self.msg_id = data["msg_id"]
+        try:
+            await self.ws.send_json(send_data)
+        except Exception as e:
+            logger.error(f"WS Client send error {self.conn_id}: {e}")
+            raise e
+
+    async def acknowledge_msg(self, msg_id: str):
+        """收到 ACK，清除重试队列"""
+        async with self.lock:
+            self.msg_id = int(msg_id) + 1
+
+    async def get_unacked_messages(self):
+        """获取所有未确认的消息"""
+        async with self.lock:
+            return self.msg_id
+
+
 class HTTPComponent(BaseComponent):
     """FastAPI桥接组件：基于FastAPI实现HTTP/WS服务，支持与ROS的动态路由映射"""
 
@@ -170,14 +212,16 @@ class HTTPComponent(BaseComponent):
 
         self.loop = None  # FastAPI异步事件循环
         self.server_thread = None  # FastAPI服务线程（与ROS解耦）
+        self.app_start = threading.Event()
 
         # 初始化FastAPI（中间件、路由、静态文件）
         self._init_fastapi_middleware()
         self._init_fastapi_routes()
         self._init_fastapi_static()
 
-        self.ws_lock = asyncio.Lock()
-        self.ws_connections: Dict[str, WebSocket] = {}
+        self.ws_lock = threading.Lock()
+        self.ws_connections: Dict[str, WebsocketClient] = {}
+        self.msg_map = []
 
         if self.enable_register:
             self.ros_srv = rospy.Service(
@@ -186,8 +230,42 @@ class HTTPComponent(BaseComponent):
             ready_pub = rospy.Publisher("ready", String, queue_size=1, latch=True)
             # 服务准备好后发布
             ready_pub.publish("ready")
-
             rospy.on_shutdown(self._close)
+
+    async def publish_worker(self):
+        """后台重发协程"""
+        logger.info("WS Retry Worker Started.")
+        while not rospy_is_shutdown():
+            try:
+                # 1. 快速获取当前所有客户端的引用
+                with self.ws_lock:
+                    clients = self.ws_connections.values()
+
+                msg_ids = [client.get_unacked_messages() for client in clients]
+                msg_ids = await asyncio.gather(*msg_ids)
+                worker = [
+                    (client, self.msg_map[msg_id])
+                    for (msg_id, client) in zip(msg_ids, clients)
+                    if 0 <= msg_id < len(self.msg_map)
+                ]
+
+                async def send_worker(client, msg):
+                    try:
+                        logger.info(f"send {msg['msg_id']} to {client.conn_id}")
+                        await client.ws.send_json(msg)
+                    except Exception as e:
+                        logger.error(f"Retry send failed for {client.conn_id}: {e}")
+                        with self.ws_lock:
+                            self.ws_connections.pop(client.conn_id, None)
+
+                # 2. 遍历客户端进行重发 (不在全局锁内)
+                await asyncio.gather(*(send_worker(*item) for item in worker))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Publish worker error: {e}")
+
+            await asyncio.sleep(2.0)  # 建议重试间隔稍微设长一点，比如2秒
 
     def _close(self):
         if self.enable_register and hasattr(self, "ros_srv"):
@@ -253,27 +331,31 @@ class HTTPComponent(BaseComponent):
 
         @app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
-            """WebSocket核心路由：处理WS连接的建立、断开"""
             await websocket.accept()
-            async with self.ws_lock:
-                conn_id = str(uuid.uuid4())
-                self.ws_connections[conn_id] = websocket
+            client = WebsocketClient(websocket)
+            conn_id = client.conn_id
+
+            with self.ws_lock:
+                self.ws_connections[conn_id] = client
+
             self.trigger("on_connect", {}, conn_id)
+
             try:
-                # 心跳检测（超时无消息则循环，避免永久阻塞）
                 while True:
                     json_data = await websocket.receive_json()
-                    params = {}
-                    if self.router is not None:
-                        params["route"] = self.router(json_data)
-                    self.trigger("on_message", params, json_data)
+                    msg_id = json_data.get("msg_id", None)
+                    # 收到 ACK
+                    if msg_id is not None:
+                        await client.acknowledge_msg(msg_id)
+                        logger.info(f"receive {conn_id}: {json_data}")
+
             except Exception as e:
-                try:
-                    async with self.ws_lock:
-                        del self.ws_connections[conn_id]
-                    self.trigger("on_disconnect", {})
-                except:
-                    pass
+                logger.info(f"WS Disconnected: {conn_id}, reason: {e}")
+            finally:
+                # 确保无论如何断开连接都会被清理
+                with self.ws_lock:
+                    self.ws_connections.pop(conn_id, None)
+                self.trigger("on_disconnect", {})
 
         @app.get("/page_config")
         async def get_page_config():
@@ -318,6 +400,7 @@ class HTTPComponent(BaseComponent):
             uvicorn_logger.handlers.clear()
             # 让uvicorn日志传递到根日志器处理
             uvicorn_logger.propagate = True
+        self.app_start.set()  # FastAPI服务即将启动，点亮绿灯！
         await self.server.serve()
 
     def start_server(self, host: str = "0.0.0.0", port: int = 8000) -> None:
@@ -335,7 +418,12 @@ class HTTPComponent(BaseComponent):
         is_ready = self.server_ready.wait(timeout=5.0)
         if not is_ready:
             raise RuntimeError("Server start timeout!")
+
+        out = self.app_start.wait(10)
+        if out == False:
+            raise TimeoutError("FastAPI server start timeout!")
         logger.info("FastAPI is running!")
+        asyncio.run_coroutine_threadsafe(self.publish_worker(), self.loop)
 
     def bind_callback(self, event_name, params, callback):
         if event_name in ["on_post", "on_get"]:
@@ -346,18 +434,36 @@ class HTTPComponent(BaseComponent):
             super().bind_callback(event_name, params, callback)
 
     def send_json(self, conn_id, data: Dict[str, Any]):
-        async def worker():
-            async with self.ws_lock:
-                try:
-                    ws = self.ws_connections[conn_id]
-                    await ws.send_json(data)
-                except Exception as e:
-                    logger.error(f"WS Client error: {conn_id}: {e}")
-                    del self.ws_connections[conn_id]
+        """向指定客户端发送数据"""
 
+        async def worker():
+            client = None
+            # 1. 仅在锁内获取客户端引用，极速释放锁
+            client = self.ws_connections.get(conn_id)
+
+            if client is None:
+                return
+            # 2. 在锁外执行网络发送，防止卡死
+            try:
+                await client.send_event_data(data, retry=True)
+            except Exception as e:
+                logger.error(f"{conn_id}: {e}")
+                with self.ws_lock:
+                    self.ws_connections.pop(conn_id, None)
+
+        # 提交到事件循环运行
         asyncio.run_coroutine_threadsafe(worker(), self.loop)
 
     def publish(self, data: Dict[str, Any]):
-        conn_ids = copy.deepcopy(list(self.ws_connections.keys()))
+        """广播给所有客户端"""
+        # 注意：这里不需要再 deepcopy conn_ids，也不需要 copy data
+        # 因为 send_event_data 内部已经做了 deepcopy
+        with self.ws_lock:  # 如果是普通线程调用，不需要 async
+            conn_ids = list(self.ws_connections.keys())
+            if data.get("type", None) == "event":
+                msg_id = len(self.msg_map)
+                self.msg_map.append(data)
+                data["msg_id"] = msg_id
+
         for conn_id in conn_ids:
             self.send_json(conn_id, data)

@@ -134,7 +134,11 @@ class HTTP_ProxyComponent(BaseComponent):
             )
         finally:
             await async_exit_stack.aclose()
-            return StringSrvResponse(response=json.dumps(response))
+            try:
+                res = json.dumps(response)
+            except Exception as e:
+                res = str(response)
+            return StringSrvResponse(response=res)
 
     def _register_ros_services(self, func: Callable, path: str, method: str) -> None:
         """从Manager中读取路由回调，完成ROS Service注册及Http-ROS映射"""
